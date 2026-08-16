@@ -34,20 +34,14 @@ cd presentation-photo
 - Windows: `00_시작\시작하기.bat`을 더블클릭합니다.
 - macOS: `00_시작/시작하기.command`를 더블클릭합니다.
 
-수동으로 브라우저 도구만 열 때는 패키지 루트에서 안전한 로컬 서버를 실행합니다.
+첫 실행에는 필요한 환경을 자동으로 점검·설치한 뒤 브라우저가 열립니다. 그 뒤에는 화면의 `📋 작업 순서`만 따라가면 됩니다.
 
-```bash
-python3 00_시작/serve_tool.py
-```
+1. **사진 넣기** — 사진을 브라우저 화면에 끌어놓거나 `사진 폴더 열기`로 원본 폴더에 넣습니다.
+2. **사진 준비** — 촬영 간격으로 그룹을 나누고 작업용 축소본과 목록을 만듭니다.
+3. **모서리·색 보정** — 왼쪽 목록에서 사진을 고르고 네 모서리와 색을 맞춥니다.
+4. **PDF 만들기** — `PDF 만들기(고해상도)`를 눌러 `03_결과물`에 저장합니다.
 
-그 뒤에는 화면 안내만 따라가면 됩니다.
-
-1. **환경 점검** — Python 가상환경과 필요한 패키지를 확인·설치합니다.
-2. **사진 준비** — `01_원본사진`의 원본을 읽어 `02_작업장`에 작업용 축소본과 그룹을 만듭니다.
-3. **도구 작업** — 브라우저에서 네 모서리와 색을 맞추고 `백업 내보내기`로 JSON을 저장합니다.
-4. **PDF 만들기** — 백업값을 원본 사진에 적용해 `03_결과물`에 고해상도 PDF를 만듭니다.
-
-브라우저에서 PDF를 직접 내보낼 때만 jsPDF를 `cdn.jsdelivr.net`에서 받으므로 인터넷 연결이 필요합니다. 파일은 SRI 해시로 무결성을 검증하며 사진은 외부로 전송하지 않습니다. 오프라인에서는 시작 메뉴의 Python `PDF 만들기`를 사용하세요.
+새 작업 순서 패널의 고해상도 PDF는 로컬 Python으로 만들기 때문에 인터넷이 필요 없습니다. 기존 툴바의 `PDF 내보내기`를 사용할 때만 jsPDF를 `cdn.jsdelivr.net`에서 받습니다. 파일은 SRI 해시로 무결성을 검증하며 사진은 외부로 전송하지 않습니다. 기존 `백업 내보내기` 다운로드도 오프라인 백업 수단으로 그대로 사용할 수 있습니다.
 
 ### 번호 매긴 폴더 지도
 
@@ -66,10 +60,12 @@ python3 00_시작/serve_tool.py
 ## 자주 막히는 것
 
 - **Windows에서 시작 창이 바로 닫힘** — Python 설치 때 `Add python.exe to PATH`를 체크했는지 확인합니다.
-- **HEIC 사진을 못 읽음** — 시작 메뉴의 환경 점검을 다시 실행해 `pillow-heif`를 설치합니다.
-- **사진이 목록에 없음** — 사진 준비를 다시 실행해 목록을 갱신합니다.
+- **HEIC 사진을 못 읽음** — CLI 메뉴의 환경 점검을 다시 실행해 `pillow-heif`를 설치합니다.
+- **업로드가 거부됨** — 파일명의 `#`, `?`, `%`, 경로 문자와 Windows 예약 이름을 제거합니다.
+- **“보안 확인 실패”가 보임** — 주소가 `http://localhost:8770/slide_tool/`인지 확인하고 시작 파일로 다시 엽니다.
+- **사진이 목록에 없음** — 브라우저의 `사진 준비`를 다시 실행해 목록을 갱신합니다.
 - **브라우저 작업이 사라진 것처럼 보임** — 같은 브라우저와 `localhost:8770`을 사용하고, 폴더·파일 이름을 바꾸지 않습니다.
-- **PDF가 흐림** — 브라우저 PDF가 아니라 시작 메뉴의 `PDF 만들기`를 사용합니다.
+- **시작 화면이나 API를 우회해 복구해야 함** — 패키지 루트에서 `python3 00_시작/launch.py`를 실행하면 기존 CLI 메뉴가 열립니다.
 
 자세한 진단은 [문제해결](04_설명서/06_문제해결.md)을 보세요.
 
@@ -92,8 +88,8 @@ python3 00_시작/serve_tool.py
 
 ### 에이전트용 설치 절차 (비대화형)
 
-`시작하기.bat` / `launch.py` 는 **메뉴를 고르는 대화형**이라 에이전트가 진행할 수 없다.
-아래 스크립트를 직접 호출하라. 전부 비대화형이고 종료코드로 성공/실패를 판정할 수 있다.
+`시작하기.bat` / `시작하기.command`는 `launch.py --auto`로 사람용 브라우저 흐름을 연다.
+인자 없는 `launch.py`의 기존 CLI 메뉴도 유지되지만 대화형이므로, 에이전트는 아래 스크립트를 직접 호출하라. 전부 비대화형이고 종료코드로 성공/실패를 판정할 수 있다.
 
 **Windows (cmd) 기준. macOS·Linux 는 `python` → `python3`, `\` → `/`, `.venv\Scripts\` → `.venv/bin/`.**
 
@@ -128,6 +124,9 @@ python 00_시작\serve_tool.py
 
 `serve_tool.py` 는 브라우저를 자동으로 연다. 열지 않으려면 `--no-open`,
 포트를 바꾸려면 `--port N`, 자동 종료를 끄려면 `--no-watchdog`.
+사람이 한 번에 시작할 때는 `python 00_시작\launch.py --auto`를 사용할 수 있다.
+
+서버에는 `/api/token`으로 시작하는 브라우저 워크플로 API가 있으며 변경 요청에는 기동별 토큰이 필요하다. 에이전트 자동화는 브라우저 토큰을 흉내 내지 말고 위의 CLI 스크립트를 직접 사용한다.
 
 사람이 브라우저에서 보정하고 `백업 내보내기`를 누른 뒤:
 
@@ -146,6 +145,8 @@ REM 7) 백업 JSON → 03_결과물 에 고해상도 PDF
 | 경로 독립성 | `python 05_스크립트\check_portable.py` | `PORTABLE: PASS` |
 | 보안 회귀 | `.venv\Scripts\python.exe 05_스크립트\test_security.py` | `SECURITY: ALL PASS` |
 | 서버 수명 | `python 05_스크립트\test_serve_tool.py` | `SERVE: ALL PASS` |
+| 워크플로 API | `.venv\Scripts\python.exe 05_스크립트\test_workflow_api.py` | `WORKFLOW: ALL PASS` |
+| HTML 무결성 | `python 05_스크립트\check_index_integrity.py` | `INDEX: PASS` |
 | 색연산 일치 | `.venv\Scripts\python.exe 05_스크립트\test_color_parity.py` | `RESULT: ALL PASS` |
 
 #### 에이전트가 흔히 막히는 지점
@@ -185,6 +186,8 @@ python3 05_스크립트/test_color_parity.py
 python3 05_스크립트/test_parallel_parity.py
 python3 05_스크립트/test_security.py
 python3 05_스크립트/test_serve_tool.py
+python3 05_스크립트/test_workflow_api.py
+python3 05_스크립트/check_index_integrity.py
 python3 05_스크립트/lint_bat.py 00_시작/시작하기.bat
 python3 05_스크립트/check_portable.py
 python3 05_스크립트/check_docs_paths.py
@@ -203,9 +206,10 @@ python3 05_스크립트/check_docs_paths.py
 | 파일 | 역할 |
 |---|---|
 | `00_시작/envcheck.py` | 실행 환경·가상환경·필수 패키지 점검 |
-| `00_시작/launch.py` | 사람용 4단계 메뉴와 작업 연결 |
+| `00_시작/launch.py` | 사람용 자동 브라우저 흐름과 기존 CLI 메뉴 |
 | `00_시작/serve_tool.py` | 로컬 브라우저 도구 서버 |
 | `02_작업장/slide_tool/index.html` | 원근·색 보정 UI와 브라우저 저장 |
+| `02_작업장/slide_tool/workflow.js` | 사진 업로드·준비·고해상도 PDF 작업 순서 패널 |
 | `02_작업장/slide_tool/gen_manifest.py` | 그룹 사진 목록을 `data.js`로 생성 |
 | `05_스크립트/init_worktree.py` | 그룹 계획과 이동 가능한 `worktree.json` 생성 |
 | `05_스크립트/prepare_photos.py` | 원본을 읽어 작업용 축소본 생성 |
@@ -213,6 +217,7 @@ python3 05_스크립트/check_docs_paths.py
 | `05_스크립트/slide_color.py` | 브라우저와 짝을 이루는 Python 색 코어 |
 | `05_스크립트/check_portable.py` | 절대경로·개발 환경 문자열·삭제 기능 잔존 검사 |
 | `05_스크립트/check_docs_paths.py` | 설명서 구경로와 깨진 로컬 링크 검사 |
+| `05_스크립트/check_index_integrity.py` | 색 코어 해시와 워크플로 스크립트 삽입 무결성 검사 |
 
 ## 출처
 

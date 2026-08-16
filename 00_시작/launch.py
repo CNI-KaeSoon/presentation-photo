@@ -56,6 +56,21 @@ def ensure_env(pkg_root: Path) -> bool:
     return envcheck.interactive_setup(pkg_root)
 
 
+def auto_flow(pkg_root: Path) -> int:
+    """환경을 비대화형으로 준비한 뒤 브라우저 워크플로를 연다."""
+    snapshot = envcheck.inspect_environment(pkg_root)
+    if not snapshot.get("ok"):
+        print("필수 환경을 자동으로 준비합니다.")
+        if not envcheck.interactive_setup(pkg_root, assume_yes=True):
+            print("필수 환경을 준비하지 못했습니다.", file=sys.stderr)
+            return 1
+    if not env_ready(pkg_root):
+        print("필수 환경이 아직 준비되지 않았습니다.", file=sys.stderr)
+        return 1
+    print("브라우저 작업 화면을 엽니다.")
+    return 0 if do_serve(pkg_root) else 1
+
+
 def _input(prompt: str, default: str = "") -> Optional[str]:
     try:
         answer = input(prompt)
@@ -273,9 +288,9 @@ def render_menu(ready: bool, status: dict[str, object]) -> None:
         print(" 환경: 준비 필요 — 먼저 [1]을 실행하세요")
     print(" [1] 환경 점검·설치")
     lock = "" if ready else "  (잠김 — 환경 셋팅을 먼저 하세요)"
-    print(f" [2] 사진 준비{lock}")
+    print(f" [2] 사진 준비{lock}  (브라우저 화면에서도 가능)")
     print(f" [3] 도구 열기{lock}")
-    print(f" [4] PDF 만들기{lock}")
+    print(f" [4] PDF 만들기{lock}  (브라우저 화면에서도 가능)")
     print(" [0] 종료")
 
 
@@ -311,6 +326,7 @@ def menu_loop(pkg_root: Path, smoke: bool = False) -> int:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--auto", action="store_true", help="환경 준비 후 브라우저 워크플로 실행")
     parser.add_argument("--smoke", action="store_true", help="메뉴를 한 번 표시하고 종료")
     parser.add_argument("--pkg-root", default=None, metavar="DIR", help="배포 패키지 루트")
     return parser.parse_args(argv)
@@ -318,7 +334,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    return menu_loop(package_root(args.pkg_root), smoke=args.smoke)
+    root = package_root(args.pkg_root)
+    if args.auto:
+        return auto_flow(root)
+    return menu_loop(root, smoke=args.smoke)
 
 
 if __name__ == "__main__":

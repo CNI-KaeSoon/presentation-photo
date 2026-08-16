@@ -41,7 +41,7 @@ pause
 exit /b 1
 
 :run
-"%PY%" "%~dp0launch.py"
+"%PY%" "%~dp0launch.py" --auto
 set "RUN_RC=%ERRORLEVEL%"
 pause
 exit /b %RUN_RC%

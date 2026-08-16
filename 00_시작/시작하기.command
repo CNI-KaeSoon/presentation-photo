@@ -8,7 +8,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 "$SCRIPT_DIR/launch.py"
+python3 "$SCRIPT_DIR/launch.py" --auto
 run_rc=$?
 read -r -p "엔터를 누르면 닫힙니다."
 exit "$run_rc"
