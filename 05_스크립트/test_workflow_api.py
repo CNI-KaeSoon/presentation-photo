@@ -138,6 +138,43 @@ def make_group(pkg: Path, name: str, image_name: str = "GROUP.jpg") -> Path:
     return image_dir.parent
 
 
+def make_export_groups(pkg: Path) -> tuple[list[str], dict[str, tuple[int, int, int]]]:
+    """순서 병합을 화면 색으로 확인할 수 있는 2개 그룹을 만든다."""
+    groups = ["01_RED", "02_BLUE"]
+    colors = {"01_RED": (220, 30, 30), "02_BLUE": (30, 30, 220)}
+    plan_groups: dict[str, list[str]] = {}
+    for index, name in enumerate(groups, 1):
+        image_name = f"EXPORT_{index}.jpg"
+        color = colors[name]
+        Image.new("RGB", (160, 120), color).save(pkg / "01_원본사진" / image_name)
+        image_dir = pkg / "02_작업장" / name / "img"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (160, 120), color).save(image_dir / image_name)
+        plan_groups[name] = [image_name]
+    plan = {
+        "_type": "slide_tool_worktree",
+        "_version": 2,
+        "root": ".",
+        "source": "../01_원본사진",
+        "groups": plan_groups,
+    }
+    (pkg / "02_작업장" / "worktree.json").write_text(
+        json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, str(pkg / "02_작업장" / "slide_tool" / "gen_manifest.py")],
+        cwd=pkg,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout + result.stderr).strip()
+    return groups, colors
+
+
 def http_request(
     method: str,
     url: str,
@@ -322,6 +359,42 @@ def job_log(job: dict[str, object]) -> str:
     return "\n".join(
         str(row[1]) for row in lines if isinstance(row, list) and len(row) == 2
     )
+
+
+def pdf_page_colors(path: Path, page_count: int) -> list[tuple[int, int, int]]:
+    """Poppler로 각 페이지를 렌더링해 중앙 화소의 RGB를 읽는다."""
+    pdftoppm = shutil.which("pdftoppm")
+    assert pdftoppm is not None, "PDF 페이지 순서 검증에 필요한 pdftoppm이 없습니다."
+    colors: list[tuple[int, int, int]] = []
+    with tempfile.TemporaryDirectory(prefix="workflow_pdf_pages_") as temp_dir:
+        for page in range(1, page_count + 1):
+            prefix = Path(temp_dir) / f"page_{page}"
+            result = subprocess.run(
+                [
+                    pdftoppm,
+                    "-f",
+                    str(page),
+                    "-l",
+                    str(page),
+                    "-singlefile",
+                    "-scale-to",
+                    "32",
+                    "-png",
+                    str(path),
+                    str(prefix),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr.strip()
+            with Image.open(prefix.with_suffix(".png")) as image:
+                rgb = image.convert("RGB")
+                colors.append(rgb.getpixel((rgb.width // 2, rgb.height // 2)))
+    return colors
 
 
 def outside_pdf_snapshot(temp: Path, allowed_out: Path) -> dict[str, str]:
@@ -845,10 +918,11 @@ def make_backup(
     *,
     moves: Optional[dict[str, object]] = None,
     ratios: Optional[dict[str, object]] = None,
+    statuses: Optional[dict[str, object]] = None,
 ) -> dict[str, object]:
     maps = {
         "slideCorners_v1": {key: CORNERS for key in keys},
-        "slideStatus_v1": {},
+        "slideStatus_v1": statuses or {},
         "slideRatios_v1": ratios or {},
         "slideMoves_v1": moves or {},
         "slideColor_v1": {},
@@ -875,6 +949,186 @@ def export_job(
     job = wait_job(base, token, timeout)
     assert job.get("state") == "done", job_log(job)
     return job
+
+
+def export_mode_job(
+    base: str,
+    token: str,
+    backup: dict[str, object],
+    mode: str,
+    *,
+    order: Optional[list[str]] = None,
+    only_done: bool = False,
+    timeout: float = 90,
+) -> dict[str, object]:
+    request: dict[str, object] = {
+        "backup": backup,
+        "mode": mode,
+        "onlyDone": only_done,
+    }
+    if order is not None:
+        request["order"] = order
+    status, _, payload = json_post(base, "/api/export-pdf", token, request)
+    assert status == 202, payload
+    job = wait_job(base, token, timeout)
+    assert job.get("state") == "done", job_log(job)
+    return job
+
+
+def run_export_modes() -> list[bool]:
+    results: list[bool] = []
+    processes: list[subprocess.Popen[str]] = []
+    with tempfile.TemporaryDirectory(prefix="workflow_export_modes_") as temp_dir:
+        temp = Path(temp_dir)
+
+        def setup_case(name: str) -> tuple[Path, str, str, list[str], dict[str, object]]:
+            pkg = make_pkg(temp / name)
+            groups, _colors = make_export_groups(pkg)
+            _, base, token = start_server(pkg, processes)
+            keys = [
+                f"../{group}/img/EXPORT_{index}.jpg"
+                for index, group in enumerate(groups, 1)
+            ]
+            return pkg, base, token, groups, make_backup(keys)
+
+        def e1() -> None:
+            pkg, base, token, groups, backup = setup_case("per_folder")
+            job = export_mode_job(base, token, backup, "per-folder")
+            out = pkg / "03_결과물"
+            assert sorted(path.name for path in out.glob("*.pdf")) == [
+                f"{name}.pdf" for name in groups
+            ]
+            assert "전체.pdf" not in job_log(job)
+
+        results.append(report("E1 per-folder 그룹별 PDF·통합본 없음", e1))
+
+        def e2() -> None:
+            pkg, base, token, groups, backup = setup_case("merged")
+            job = export_mode_job(base, token, backup, "merged")
+            out = pkg / "03_결과물"
+            assert sorted(path.name for path in out.glob("*.pdf")) == sorted(
+                [*(f"{name}.pdf" for name in groups), "전체.pdf"]
+            )
+            assert "전체.pdf" in job_log(job)
+
+        results.append(report("E2 merged 그룹별 PDF+통합본", e2))
+
+        def e3() -> None:
+            pkg, base, token, groups, backup = setup_case("ordered")
+            requested = list(reversed(groups))
+            job = export_mode_job(base, token, backup, "ordered", order=requested)
+            out = pkg / "03_결과물"
+            assert [path.name for path in out.glob("*.pdf")] == ["전체.pdf"]
+            page_colors = pdf_page_colors(out / "전체.pdf", 2)
+            assert page_colors[0][2] > page_colors[0][0], page_colors
+            assert page_colors[1][0] > page_colors[1][2], page_colors
+            assert "결과 파일: 전체.pdf" in job_log(job)
+
+        results.append(report("E3 ordered 지정 순서 통합 PDF 1개", e3))
+
+        def e4() -> None:
+            _pkg, base, token, groups, backup = setup_case("bad_order")
+            bad_orders = (
+                ["../escape"],
+                [str(temp / "absolute")],
+                ["missing"],
+                [groups[0], groups[0]],
+                [groups[0]],
+            )
+            for order in bad_orders:
+                status, _, payload = json_post(
+                    base,
+                    "/api/export-pdf",
+                    token,
+                    {"backup": backup, "mode": "ordered", "order": order},
+                )
+                assert status == 400, (order, status, payload)
+                assert payload.get("error") == "bad_order", payload
+
+        results.append(report("E4 order 경로·미존재·중복·일부만 지정 거부", e4))
+
+        def e5() -> None:
+            pkg, base, token, groups, _backup = setup_case("ordered_only_done")
+            keys = [
+                f"../{group}/img/EXPORT_{index}.jpg"
+                for index, group in enumerate(groups, 1)
+            ]
+            one_done = make_backup(
+                keys,
+                statuses={keys[0]: {"done": False}, keys[1]: {"done": True}},
+            )
+            job = export_mode_job(
+                base,
+                token,
+                one_done,
+                "ordered",
+                order=groups,
+                only_done=True,
+            )
+            merged = pkg / "03_결과물" / "전체.pdf"
+            assert merged.is_file()
+            colors = pdf_page_colors(merged, 1)
+            assert colors[0][2] > colors[0][0], colors
+            assert f"0쪽 그룹 건너뜀: {groups[0]}" in job_log(job)
+
+            before = hashlib.sha256(merged.read_bytes()).hexdigest()
+            none_done = make_backup(
+                keys,
+                statuses={key: {"done": False} for key in keys},
+            )
+            status, _, payload = json_post(
+                base,
+                "/api/export-pdf",
+                token,
+                {
+                    "backup": none_done,
+                    "mode": "ordered",
+                    "order": groups,
+                    "onlyDone": True,
+                },
+            )
+            assert status == 202, payload
+            failed = wait_job(base, token, 90)
+            assert failed.get("state") == "error", job_log(failed)
+            assert "병합할 페이지가 없습니다" in job_log(failed)
+            assert hashlib.sha256(merged.read_bytes()).hexdigest() == before
+
+        results.append(report("E5 ordered onlyDone 0쪽 건너뜀·전체 0쪽 실패", e5))
+
+        def e6() -> None:
+            module = load_server_module()
+            out = temp / "merged_failure_out"
+            out.mkdir()
+            existing = out / "전체.pdf"
+            existing.write_bytes(b"existing-result")
+            fake_export = [sys.executable, "-c", "raise SystemExit(0)"]
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    module.STAGED_EXPORT_CODE,
+                    json.dumps(fake_export),
+                    "merged",
+                    "[]",
+                    str(out),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            assert result.returncode != 0
+            assert "통합 PDF가 생성되지 않았습니다" in result.stderr
+            assert existing.read_bytes() == b"existing-result"
+
+        results.append(report("E6 merged 통합본 미생성 시 job error·기존 결과 보존", e6))
+        for process in processes:
+            stop_process(process)
+    for process in processes:
+        stop_process(process)
+    return results
 
 
 def run_job() -> list[bool]:
@@ -1172,14 +1426,20 @@ def run_job() -> list[bool]:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=("auth", "upload", "rename", "job"))
+    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export"))
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    runners = {"auth": run_auth, "upload": run_upload, "rename": run_rename, "job": run_job}
-    selected = [args.only] if args.only else ["auth", "upload", "rename", "job"]
+    runners = {
+        "auth": run_auth,
+        "upload": run_upload,
+        "rename": run_rename,
+        "job": run_job,
+        "export": run_export_modes,
+    }
+    selected = [args.only] if args.only else ["auth", "upload", "rename", "job", "export"]
     results: list[bool] = []
     try:
         for name in selected:

@@ -1,8 +1,7 @@
 # 슬라이드 보정 도구 — 파이썬 의존성
 #   pip install -r requirements.txt
 #
-# 브라우저 PDF 버튼은 jsPDF를 SRI 검증된 CDN에서 받으므로 인터넷이 필요합니다.
-# 오프라인 PDF 내보내기는 아래 Python 의존성만 사용합니다.
+# PDF는 작업 순서의 ④ 단계에서 로컬 Python으로 만들며 아래 의존성만 사용합니다.
 # 아래는 사진 준비(prepare_photos.py)와 고해상도 PDF 내보내기(export_pdf.py)에 씁니다.
 
 opencv-python>=4.8        # 원근 보정(warp) · 무아레 제거(NLM)

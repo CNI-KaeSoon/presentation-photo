@@ -8,7 +8,6 @@
 <script src="data.js"></script>
 <script src="heartbeat.js" defer></script>
 <script src="workflow.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 <style>
 :root{
   --bg:#f7f9fc;--panel:#ffffff;--panel2:#f1f5f9;--ink:#172033;--mut:#64748b;
@@ -84,7 +83,6 @@ body.navcol #navToggle{left:0}
 .edgeHandle:hover{background:rgba(37,99,235,.6)}
 .previewCanvas{width:100%;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:6px;display:block}
 .smallRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.progress{min-height:18px;font-size:12px;color:var(--mut)}
 kbd{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f5f9;border:1px solid var(--line);border-radius:4px;padding:1px 5px}
 /* ---- 🎨 색보정 모드 ---- */
 .previewWrap{max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
@@ -220,16 +218,12 @@ body.colormode .previewHint{display:none}
             <span id="statusBadges"></span>
           </div>
           <div class="actions">
-            <button id="exportBtn" class="btn" onclick="exportCurrentFolder('all')">PDF 내보내기</button>
-            <button id="exportDoneBtn" class="btn" onclick="exportCurrentFolder('done')" title="완료 표시한 슬라이드만 원근보정 적용해 한 PDF로 저장하고 위치(코너) 백업 JSON도 함께 저장">완료본 PDF+위치백업</button>
-            <button id="cancelExportBtn" class="btn sm warn" onclick="cancelExport()" style="display:none" disabled>취소</button>
             <button id="backupExportBtn" class="btn sm" onclick="exportBackup()" title="모든 폴더의 보정·완료·제외·비율 상태를 JSON 파일로 저장">백업 내보내기</button>
             <button id="backupImportBtn" class="btn sm" onclick="document.getElementById('backupFile').click()" title="백업 JSON을 불러와 복원">백업 불러오기</button>
             <input id="backupFile" type="file" accept="application/json,.json" style="display:none" onchange="importBackup(this.files)">
-            <span id="progress" class="progress"></span>
           </div>
         </div>
-        <div class="muted" style="margin-top:8px">"PDF 내보내기" = "제외" 뺀 전체 · "완료본 PDF+위치백업" = "완료" 표시한 슬라이드만 한 PDF로 저장 + 위치(코너)·상태 백업 JSON 동시 저장</div>
+        <div class="muted" style="margin-top:8px">백업은 모든 폴더의 코너·색보정·완료·제외·비율 상태를 JSON으로 저장하거나 복원합니다.<br>PDF는 작업 순서의 ④ PDF 만들기에서 원본 사진을 기준으로 고해상도로 만듭니다.</div>
       </div>
       <div class="editorGrid">
         <div class="panel stagePanel">
@@ -279,7 +273,7 @@ body.colormode .previewHint{display:none}
             <span class="muted previewHint"><kbd>↑</kbd>/<kbd>↓</kbd> 이동</span>
           </div>
           <div id="previewWrap" class="previewWrap"><canvas id="preview" class="previewCanvas"></canvas></div>
-          <p class="muted">PDF 내보내기는 제외 항목을 건너뛰고, 출력 비율에 맞춰 미리보기와 같은 보정을 적용합니다.</p>
+          <p class="muted">여기서 확인한 코너·색보정·출력 비율은 자동 저장되며, ④ PDF 만들기에서 원본 사진에 적용됩니다.</p>
         </div>
       <!-- colorPanel 은 editorGrid 의 3번째 항목이다. 코너 모드에선 display:none 이라
            그리드 항목이 되지 않아 기존 2열(원본|미리보기) 레이아웃이 그대로 유지되고,
@@ -390,8 +384,6 @@ let sourcePixels=null;
 let sourceCanvas=document.createElement('canvas');
 let sourceCtx=sourceCanvas.getContext('2d',{willReadFrequently:true});
 let renderQueued=false;
-let exporting=false;
-let exportCancelled=false;
 
 function readStore(key,fallback){try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback));}catch{return fallback;}}
 // ⚠️ localStorage 는 용량 한계(보통 5~10MB)가 있고, 초과 시 setItem 이 throw 한다.
@@ -1155,104 +1147,6 @@ function solve(A,b){
   }
   return M.map(row=>row[n]);
 }
-
-function loadImage(file){
-  return new Promise((resolve,reject)=>{
-    const img=new Image();
-    img.onload=()=>resolve(img);
-    img.onerror=()=>reject(new Error('image load failed: '+file));
-    img.src=file;
-  });
-}
-
-async function imageToCanvas(slide){
-  const img=await loadImage(slide.file);
-  const hasOverride=!!cornersStore[slide.file];
-  const canvas=document.createElement('canvas');
-  if(ratioFor(slide.file)!=='free'||hasOverride){
-    const temp=document.createElement('canvas');
-    temp.width=img.naturalWidth;temp.height=img.naturalHeight;
-    const tctx=temp.getContext('2d',{willReadFrequently:true});
-    tctx.drawImage(img,0,0);
-    const pixels=tctx.getImageData(0,0,temp.width,temp.height);
-    renderWarpToCanvas(canvas,pixels,getCorners(slide.file),ratioFor(slide.file));
-  }else{
-    // Uncorrected images keep their natural aspect ratio in the PDF instead of forcing the ratio preset.
-    canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
-    canvas.getContext('2d').drawImage(img,0,0);
-  }
-  // JS PDF 내보내기도 미리보기와 동일하게 수동 색보정을 반영(있을 때만).
-  const color=getColor(slide.file);
-  if(!isDefaultColor(color)){
-    const ctx=canvas.getContext('2d',{willReadFrequently:true});
-    const im=ctx.getImageData(0,0,canvas.width,canvas.height);
-    applyColorToImageData(im,color);
-    ctx.putImageData(im,0,0);
-  }
-  return canvas;
-}
-
-function fitRect(iw,ih,pw,ph,margin){
-  const maxW=pw-margin*2,maxH=ph-margin*2;
-  const scale=Math.min(maxW/iw,maxH/ih);
-  const w=iw*scale,h=ih*scale;
-  return {x:(pw-w)/2,y:(ph-h)/2,w,h};
-}
-
-function cancelExport(){exportCancelled=true;}
-
-async function exportCurrentFolder(mode='all'){
-  if(exporting)return;
-  exporting=true;
-  exportCancelled=false;
-  const doneBtnEl=document.getElementById('exportDoneBtn');
-  document.getElementById('exportBtn').disabled=true;
-  if(doneBtnEl)doneBtnEl.disabled=true;
-  document.getElementById('cancelExportBtn').style.display='inline-block';
-  document.getElementById('cancelExportBtn').disabled=false;
-  let exported=0;
-  let cancelled=false;
-  const onlyDone=(mode==='done');
-  try{
-    const folder=curFolder;if(!folder)return;
-    const slides=(DATA[folder]||[]).filter(s=>{
-      const st=statusFor(s.file);
-      return !st.excluded && (!onlyDone || !!st.done);
-    });
-    if(!slides.length){setProgress(onlyDone?'완료 표시된 이미지가 없습니다.':'내보낼 이미지가 없습니다.');return;}
-    if(!window.jspdf||!window.jspdf.jsPDF){setProgress('jsPDF 로드 실패');return;}
-    const {jsPDF}=window.jspdf;
-    let pdf=null;
-    for(let i=0;i<slides.length;i++){
-      setProgress(`${onlyDone?'[완료본] ':''}${i+1} / ${slides.length} 처리 중...`);
-      await new Promise(r=>requestAnimationFrame(r));
-      if(exportCancelled){cancelled=true;break;}
-      const canvas=await imageToCanvas(slides[i]);
-      const landscape=canvas.width>=canvas.height;
-      const page=[landscape?'l':'p','mm','a4'];
-      if(!pdf)pdf=new jsPDF({orientation:page[0],unit:page[1],format:page[2]});
-      else pdf.addPage('a4',landscape?'landscape':'portrait');
-      const pw=pdf.internal.pageSize.getWidth(),ph=pdf.internal.pageSize.getHeight();
-      const r=fitRect(canvas.width,canvas.height,pw,ph,8);
-      pdf.addImage(canvas.toDataURL('image/jpeg',0.92),'JPEG',r.x,r.y,r.w,r.h);
-      exported=i+1;
-      await new Promise(r=>setTimeout(r,0));
-    }
-    if(pdf)pdf.save(`${folder}${onlyDone?'_완료본':''}.pdf`);
-    // 완료본 내보내기 시 위치(코너)·상태 백업 JSON 동시 저장
-    if(onlyDone && exported>0 && !cancelled) exportBackup();
-    setProgress(cancelled?`취소됨: ${exported}/${slides.length} 장까지 내보냄`:`완료: ${exported}장${onlyDone?' — PDF + 위치 백업 저장됨':''}`);
-  }finally{
-    exporting=false;
-    exportCancelled=false;
-    document.getElementById('exportBtn').disabled=false;
-    if(doneBtnEl)doneBtnEl.disabled=false;
-    document.getElementById('cancelExportBtn').disabled=true;
-    document.getElementById('cancelExportBtn').style.display='none';
-  }
-}
-
-function setProgress(text){document.getElementById('progress').textContent=text;}
 
 // ===================== 🎨 수동 색보정 (PhotoScape식) =====================
 // ===COLOR_CORE_START===  (JS↔Python 동일 색연산. 이 블록은 node 파리티 테스트가 그대로 추출·실행하므로

@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import threading
@@ -59,6 +60,73 @@ WINDOWS_RESERVED = frozenset(
     | {f"com{number}" for number in range(1, 10)}
     | {f"lpt{number}" for number in range(1, 10)}
 )
+
+STAGED_EXPORT_CODE = r"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+export_command = json.loads(sys.argv[1])
+mode = sys.argv[2]
+order = json.loads(sys.argv[3])
+out_dir = Path(sys.argv[4])
+
+def publish(source, destination):
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=".slide_tool_export_", suffix=".tmp", dir=str(destination.parent)
+    )
+    os.close(descriptor)
+    temp_path = Path(temp_name)
+    try:
+        shutil.copyfile(source, temp_path)
+        os.replace(temp_path, destination)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+with tempfile.TemporaryDirectory(prefix="slide_tool_export_") as temp_dir:
+    merge_name = "_slide_tool_merged.pdf"
+    command = export_command + ["--out", temp_dir]
+    if mode == "ordered":
+        command += ["--only", *order]
+    else:
+        command += ["--merge", merge_name]
+    completed = subprocess.run(command, check=False)
+    if completed.returncode != 0:
+        raise SystemExit(completed.returncode)
+    staging = Path(temp_dir)
+    merged = staging / merge_name
+    if mode == "ordered":
+        inputs = [staging / f"{name}.pdf" for name in order]
+        skipped = [name for name, path in zip(order, inputs) if not path.is_file()]
+        inputs = [path for path in inputs if path.is_file()]
+        for name in skipped:
+            print(f"0쪽 그룹 건너뜀: {name}")
+        if not inputs:
+            print("!! 병합할 페이지가 없습니다. 완료 상태를 확인하세요.", file=sys.stderr)
+            raise SystemExit(1)
+        pdfunite = shutil.which("pdfunite")
+        if pdfunite is None:
+            print("!! 통합 PDF에 필요한 pdfunite(poppler)를 찾을 수 없습니다.", file=sys.stderr)
+            raise SystemExit(127)
+        subprocess.run([pdfunite, *(str(path) for path in inputs), str(merged)], check=True)
+        outputs = [(merged, out_dir / "전체.pdf")]
+    else:
+        if not merged.is_file():
+            print("!! pdfunite 병합이 실패해 통합 PDF가 생성되지 않았습니다.", file=sys.stderr)
+            raise SystemExit(1)
+        outputs = [
+            (path, out_dir / ("전체.pdf" if path == merged else path.name))
+            for path in sorted(staging.glob("*.pdf"), key=lambda item: item.name)
+        ]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for source, destination in outputs:
+        publish(source, destination)
+        print(f"결과 파일: {destination.name}")
+"""
 
 
 def _error_payload(code: str, detail: str) -> dict[str, object]:
@@ -1134,6 +1202,38 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
                 continue
         raise OSError("백업 파일 이름을 정할 수 없습니다.")
 
+    def _export_group_names(self) -> dict[str, str]:
+        """작업장 직계 폴더만 실제 내보내기 그룹으로 인정한다."""
+        assert self.workflow.work is not None
+        work_root = self.workflow.work.resolve()
+        groups: dict[str, str] = {}
+        try:
+            children = list(self.workflow.work.iterdir())
+        except OSError:
+            return groups
+        for child in children:
+            if (
+                child.name == "slide_tool"
+                or not child.is_dir()
+                or not (child / "img").is_dir()
+            ):
+                continue
+            safe_name, _detail = safe_group_name(child.name)
+            if safe_name is None:
+                continue
+            try:
+                resolved = child.resolve()
+            except (OSError, RuntimeError):
+                continue
+            if resolved.parent != work_root:
+                continue
+            normalized = nfc(safe_name)
+            if normalized in groups and groups[normalized] != child.name:
+                groups.pop(normalized, None)
+                continue
+            groups[normalized] = child.name
+        return groups
+
     def api_export_pdf(self) -> None:
         payload = self._read_json_body(MAX_EXPORT_BODY_BYTES)
         if payload is None:
@@ -1144,11 +1244,65 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
         backup = payload.get("backup")
         only_done = payload.get("onlyDone", False)
         merge = payload.get("merge", False)
+        mode = payload.get("mode")
+        order = payload.get("order", [])
         if not isinstance(backup, dict):
             self._error(400, "bad_backup", "backup은 JSON 객체여야 합니다.")
             return
         if not isinstance(only_done, bool) or not isinstance(merge, bool):
             self._error(400, "bad_request", "onlyDone과 merge는 true 또는 false여야 합니다.")
+            return
+        if mode is None:
+            mode = "merged" if merge else "per-folder"
+        if not isinstance(mode, str) or mode not in {
+            "per-folder",
+            "merged",
+            "ordered",
+        }:
+            self._error(
+                400,
+                "bad_request",
+                "mode는 per-folder, merged, ordered 중 하나여야 합니다.",
+            )
+            return
+        if not isinstance(order, list):
+            self._error(400, "bad_order", "order는 그룹 이름 배열이여야 합니다.")
+            return
+
+        existing_groups = self._export_group_names()
+        normalized_order: list[str] = []
+        seen: set[str] = set()
+        for raw_name in order:
+            safe_name, detail = safe_group_name(raw_name)
+            if safe_name is None:
+                self._error(400, "bad_order", f"order 그룹 이름 거부: {detail}")
+                return
+            normalized = nfc(safe_name)
+            disk_name = existing_groups.get(normalized)
+            if disk_name is None:
+                self._error(400, "bad_order", f"존재하지 않는 그룹입니다: {safe_name}")
+                return
+            if normalized in seen:
+                self._error(400, "bad_order", f"order에 중복된 그룹이 있습니다: {safe_name}")
+                return
+            seen.add(normalized)
+            normalized_order.append(disk_name)
+        if mode == "ordered" and not normalized_order:
+            self._error(400, "bad_order", "ordered 모드는 order에 그룹을 하나 이상 보내야 합니다.")
+            return
+        if mode == "ordered" and seen != set(existing_groups):
+            self._error(
+                400,
+                "bad_order",
+                "ordered 모드의 order는 현재 그룹 전체를 한 번씩 포함해야 합니다.",
+            )
+            return
+        if mode in {"merged", "ordered"} and shutil.which("pdfunite") is None:
+            self._error(
+                503,
+                "pdfunite_missing",
+                "통합 PDF에 필요한 pdfunite(poppler)를 찾을 수 없습니다.",
+            )
             return
         python, env = self._job_prerequisites()
         if python is None:
@@ -1176,16 +1330,30 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             str(self.workflow.work),
             "--src-dir",
             str(self.workflow.src),
-            "--out",
-            str(self.workflow.out),
             "--workers",
             str(env["workers"]),
         ]
         if only_done:
             command.append("--only-done")
-        if merge:
-            command.extend(("--merge", "전체.pdf"))
-        job = self.workflow.jobs.start("export", [("PDF 만들기", command)])
+        if mode in {"merged", "ordered"}:
+            # export_pdf.py는 그대로 두고 신선한 임시 폴더에서 먼저 완성본을
+            # 검증한다. ordered는 생성된 그룹만 요청 순서로 병합하고,
+            # merged는 조용한 pdfunite 실패를 통합본 존재 검사로 잡아낸다.
+            staged_command = [
+                str(python),
+                "-c",
+                STAGED_EXPORT_CODE,
+                json.dumps(command, ensure_ascii=False),
+                mode,
+                json.dumps(normalized_order, ensure_ascii=False),
+                str(self.workflow.out),
+            ]
+            phase_name = "지정 순서로 PDF 만들기" if mode == "ordered" else "통합 PDF 만들기"
+            steps = [(phase_name, staged_command)]
+        else:
+            command.extend(("--out", str(self.workflow.out)))
+            steps = [("PDF 만들기", command)]
+        job = self.workflow.jobs.start("export", steps)
         if job is None:
             self._error(409, "busy", "다른 작업이 실행 중입니다.")
             return
