@@ -8,6 +8,15 @@ from pathlib import Path
 import re
 import sys
 
+# Windows 콘솔 기본 인코딩(cp949)에는 '—'·'·'·'⚠' 같은 문자가 없어, 그대로 print 하면
+# UnicodeEncodeError 로 스크립트가 죽는다(실측: init_worktree 가 U+2014 에서 중단).
+# 출력 스트림을 UTF-8 로 고정해 어떤 콘솔에서도 깨지거나 죽지 않게 한다.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # 파이프·구버전 등 재설정 불가 시 무시
+        pass
+
 
 # 생성물·외부 환경·에이전트 런타임 상태는 배포 소스가 아니므로 검사하지 않는다.
 EXCLUDED_DIRS = {".git", ".venv", "__pycache__", ".omc", ".omx", ".codex", ".claude"}

@@ -176,7 +176,7 @@
 
     var prepareInfo = el('div', {}, [
       el('h3', {text: '② 사진 준비'}),
-      el('div', {className: 'wfRowInfo', text: '촬영 간격으로 그룹을 나누고 작업용 축소본과 목록을 만듭니다.'})
+      el('div', {className: 'wfRowInfo', text: '첫 사진의 촬영 시각을 기준으로, 촬영 간격이 이 값보다 벌어지는 지점을 발표의 경계로 보고 그룹을 나눕니다. 이어서 작업용 축소본과 목록을 만듭니다.'})
     ]);
     var prepareWork = el('div');
     ui.gap = el('input', {type: 'number', min: '1', max: '600', value: '20', inputmode: 'numeric'});
@@ -185,7 +185,7 @@
     ui.prepareBtn.addEventListener('click', function () { runPrepare(false); });
     ui.regroupBtn.addEventListener('click', confirmRegroup);
     prepareWork.appendChild(el('div', {className: 'wfControls'}, [
-      el('label', {}, [document.createTextNode('간격(분)'), ui.gap]),
+      el('label', {}, [document.createTextNode('발표 간격(분)'), ui.gap]),
       ui.prepareBtn,
       ui.regroupBtn
     ]));
@@ -526,7 +526,7 @@
   function validatedGap() {
     var gap = Number(ui.gap.value);
     if (!Number.isInteger(gap) || gap < 1 || gap > 600) {
-      showBanner('사진 간격은 1~600 사이의 정수로 입력하세요.', 'warn');
+      showBanner('발표 간격은 1~600 사이의 정수로 입력하세요.', 'warn');
       ui.gap.focus();
       return null;
     }

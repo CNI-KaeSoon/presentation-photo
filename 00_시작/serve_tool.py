@@ -280,6 +280,11 @@ class JobManager:
                     popen_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
                 else:
                     popen_options["start_new_session"] = True
+                # 자식이 콘솔 기본 인코딩(Windows=cp949)으로 쓰면 '—'·'⚠' 에서 UnicodeEncodeError 로
+                # 죽고, 살아남아도 부모의 utf-8 디코딩과 어긋나 로그가 깨진다. 자식 쪽을 강제한다.
+                child_env = dict(os.environ)
+                child_env["PYTHONIOENCODING"] = "utf-8:replace"
+                child_env["PYTHONUTF8"] = "1"
                 process = subprocess.Popen(
                     argv,
                     stdout=subprocess.PIPE,
@@ -288,6 +293,7 @@ class JobManager:
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    env=child_env,
                     **popen_options,
                 )
             except OSError as exc:
