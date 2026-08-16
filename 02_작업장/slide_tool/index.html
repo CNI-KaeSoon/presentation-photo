@@ -43,6 +43,9 @@ body.navcol #navToggle{left:0}
 .folder{border-bottom:1px solid var(--line)}
 .folderHead{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:#f8fafc;padding:11px 14px;cursor:pointer;color:var(--ink);font-weight:800;text-align:left}
 .folderHead:hover{background:#eff6ff}
+.folderRename{cursor:default;align-items:flex-start;flex-wrap:wrap}
+.folderRename input{flex:1;min-width:120px;border:1px solid var(--acc);border-radius:5px;padding:5px 7px;font:inherit;color:var(--ink);background:#fff}
+.folderRenameError{width:100%;font-size:11px;color:var(--bad);font-weight:600}
 .folderMeta{font-size:11px;color:var(--mut);font-weight:600;white-space:nowrap}
 .bulkActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line);background:#fffbeb}
 .folderBody{padding:5px 0 8px}
@@ -61,6 +64,8 @@ body.navcol #navToggle{left:0}
 .ctxMenu{position:fixed;z-index:50;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgba(15,23,42,.18);padding:4px;min-width:150px}
 .ctxMenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:7px 10px;font-size:12px;cursor:pointer;border-radius:4px;color:var(--ink);font-weight:600}
 .ctxMenu button:hover{background:#f1f5f9}
+.ctxMenu button:disabled{color:var(--mut);opacity:.55;cursor:not-allowed}
+.ctxMenu button:disabled:hover{background:none}
 .thumb{width:34px;height:22px;object-fit:cover;border:1px solid var(--line);border-radius:3px;background:#f1f5f9}
 .name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .state{font-size:10px;display:flex;gap:3px}
@@ -378,6 +383,9 @@ let lastClickedIdx=null;
 let ctxMenuClickHandler=null;
 let ctxMenuKeyHandler=null;
 let ctxMenuScrollHandler=null;
+let folderCtxMenuClickHandler=null;
+let folderCtxMenuKeyHandler=null;
+let folderCtxMenuScrollHandler=null;
 let sourcePixels=null;
 let sourceCanvas=document.createElement('canvas');
 let sourceCtx=sourceCanvas.getContext('2d',{willReadFrequently:true});
@@ -483,6 +491,86 @@ function importBackup(files){
   rd.readAsText(f);
 }
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function validateGroupName(raw){
+  if(typeof raw!=='string')return {ok:false,reason:'그룹 이름은 문자열이어야 합니다.'};
+  const value=raw.normalize('NFC');
+  if(!value||value==='.'||value==='..'||value.includes('\0'))return {ok:false,reason:'비어 있지 않은 단일 그룹 이름을 입력하세요.'};
+  if(value.includes('/')||value.includes('\\')||/^[A-Za-z]:/.test(value))return {ok:false,reason:'경로가 아닌 그룹 이름만 입력하세요.'};
+  if(value.startsWith('.'))return {ok:false,reason:'점으로 시작하는 이름은 사용할 수 없습니다.'};
+  if(Array.from(value).some(ch=>{const code=ch.charCodeAt(0);return code<32||(code>=127&&code<=159);}))return {ok:false,reason:'제어 문자는 사용할 수 없습니다.'};
+  if(/[?#%]/.test(value))return {ok:false,reason:'#, ?, % 문자는 사용할 수 없습니다.'};
+  if(/[<>:"|*]/.test(value))return {ok:false,reason:'운영체제에서 금지된 문자는 사용할 수 없습니다.'};
+  if(/[ .]$/.test(value))return {ok:false,reason:'이름 끝에 공백이나 점을 둘 수 없습니다.'};
+  const reserved=new Set(['con','prn','aux','nul','com1','com2','com3','com4','com5','com6','com7','com8','com9','lpt1','lpt2','lpt3','lpt4','lpt5','lpt6','lpt7','lpt8','lpt9']);
+  if(reserved.has(value.split('.',1)[0].toLowerCase()))return {ok:false,reason:'Windows 예약 이름은 사용할 수 없습니다.'};
+  return {ok:true,value};
+}
+function renamedFileKey(file,from,to){
+  const prefix='../'+from+'/img/';
+  return typeof file==='string'&&file.startsWith(prefix)?('../'+to+'/img/'+file.slice(prefix.length)):file;
+}
+function renamedKeyStore(store,from,to){
+  const next={};
+  Object.entries(store).forEach(([key,value])=>{if(renamedFileKey(key,from,to)===key)next[key]=value;});
+  Object.entries(store).forEach(([key,value])=>{const renamed=renamedFileKey(key,from,to);if(renamed!==key)next[renamed]=value;});
+  return next;
+}
+function replaceObject(target,next){Object.keys(target).forEach(key=>delete target[key]);Object.assign(target,next);}
+function migrateLocalGroupState(from,to){
+  const nextCorners=renamedKeyStore(cornersStore,from,to);
+  const nextStatus=renamedKeyStore(statusStore,from,to);
+  const nextRatios=renamedKeyStore(ratioStore,from,to);
+  const nextColor=renamedKeyStore(colorStore,from,to);
+  const nextMoves=renamedKeyStore(moveStore,from,to);
+  const nextUndo=renamedKeyStore(undoStacks,from,to);
+  Object.keys(nextMoves).forEach(key=>{if(nextMoves[key]===from)nextMoves[key]=to;});
+  const nextDirty=Array.from(colorDirty,file=>renamedFileKey(file,from,to));
+  const updates=[
+    [LS_CORNERS,nextCorners],[LS_STATUS,nextStatus],[LS_RATIOS,nextRatios],
+    [LS_COLOR,nextColor],[LS_MOVES,nextMoves],[LS_DIRTY,nextDirty]
+  ];
+  const originals=updates.map(([key])=>[key,localStorage.getItem(key)]);
+  try{updates.forEach(([key,value])=>localStorage.setItem(key,JSON.stringify(value)));}
+  catch(error){
+    originals.forEach(([key,value])=>{try{if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}catch(_restoreError){}});
+    throw error;
+  }
+  replaceObject(cornersStore,nextCorners);replaceObject(statusStore,nextStatus);
+  replaceObject(ratioStore,nextRatios);replaceObject(colorStore,nextColor);replaceObject(moveStore,nextMoves);
+  replaceObject(undoStacks,nextUndo);
+  colorDirty.clear();nextDirty.forEach(file=>colorDirty.add(file));
+  clusterByFile=renamedKeyStore(clusterByFile,from,to);
+  if(curFolder===from)curFolder=to;
+}
+function fallbackRenamedData(from,to){
+  const next={};
+  Object.entries(RAW_DATA).forEach(([folder,slides])=>{
+    const target=folder===from?to:folder;
+    next[target]=(slides||[]).map(slide=>({...slide,file:renamedFileKey(slide.file,from,to)}));
+  });
+  return next;
+}
+function applySlideData(fresh){
+  replaceObject(RAW_DATA,fresh||{});
+  window.SLIDE_DATA=RAW_DATA;
+  folderNames.splice(0,folderNames.length,...Object.keys(RAW_DATA));
+  DATA=buildData();
+  if(!folderNames.includes(curFolder))curFolder=folderNames[0]||null;
+  curIndex=Math.max(0,Math.min(curIndex,(DATA[curFolder]||[]).length-1));
+  selectedIdx=new Set(Array.from(selectedIdx).filter(index=>index<(DATA[curFolder]||[]).length));
+  if(lastClickedIdx!==null&&lastClickedIdx>=(DATA[curFolder]||[]).length)lastClickedIdx=null;
+  renderNav();loadSlide();
+}
+function reloadSlideData(){
+  return new Promise((resolve,reject)=>{
+    const previous=window.SLIDE_DATA;
+    const script=document.createElement('script');
+    script.src='data.js?rename='+Date.now();
+    script.onload=()=>{const fresh=window.SLIDE_DATA;script.remove();if(fresh&&typeof fresh==='object')resolve(fresh);else{window.SLIDE_DATA=previous;reject(new Error('새 사진 목록 형식이 올바르지 않습니다.'));}};
+    script.onerror=()=>{script.remove();window.SLIDE_DATA=previous;reject(new Error('새 사진 목록을 불러오지 못했습니다.'));};
+    document.head.appendChild(script);
+  });
+}
 function cloneCorners(c){return c.map(p=>[+p[0],+p[1]]);}
 function currentSlide(){return curFolder?DATA[curFolder][curIndex]:null;}
 function getCorners(file){return cloneCorners(cornersStore[file]||DEFAULT_CORNERS);}
@@ -582,6 +670,10 @@ function renderNav(){
     if(folder!==curFolder && DATA[folder] && DATA[folder].length){selectSlide(folder,0);return;}
     box.classList.toggle('collapsed');
   });
+  root.querySelectorAll('.folderHead').forEach(btn=>btn.addEventListener('contextmenu',e=>{
+    e.preventDefault();
+    openFolderCtxMenu(e.clientX,e.clientY,btn.dataset.folder);
+  }));
   root.querySelectorAll('.bulkActionBtn').forEach(btn=>btn.onclick=()=>{
     bulkSetExcluded(btn.dataset.folder,Array.from(selectedIdx),btn.dataset.action==='exclude');
   });
@@ -702,6 +794,7 @@ function bulkSetExcluded(folder,indices,value){
 }
 
 function openCtxMenu(x,y,folder,index){
+  closeFolderCtxMenu();
   closeCtxMenu();
   const slide=(DATA[folder]||[])[index];if(!slide)return;
   const excluded=!!statusFor(slide.file).excluded;
@@ -738,6 +831,76 @@ function openCtxMenu(x,y,folder,index){
   document.addEventListener('click',ctxMenuClickHandler);
   document.addEventListener('keydown',ctxMenuKeyHandler);
   document.addEventListener('scroll',ctxMenuScrollHandler,true);
+}
+
+function openFolderCtxMenu(x,y,folder){
+  closeCtxMenu();closeFolderCtxMenu();
+  const menu=document.createElement('div');
+  menu.id='folderCtxMenu';menu.className='ctxMenu';menu.style.left=x+'px';menu.style.top=y+'px';
+  const availability=window.__slideWorkflow&&typeof window.__slideWorkflow.renameAvailability==='function'
+    ?window.__slideWorkflow.renameAvailability()
+    :{enabled:false,reason:'워크플로 서버 연결을 확인하는 중입니다.'};
+  const renameBtn=document.createElement('button');
+  renameBtn.type='button';renameBtn.textContent='이름 변경';renameBtn.disabled=!availability.enabled;
+  if(!availability.enabled)renameBtn.title=availability.reason;
+  renameBtn.onclick=()=>{closeFolderCtxMenu();startGroupRename(folder);};
+  menu.appendChild(renameBtn);document.body.appendChild(menu);
+  folderCtxMenuClickHandler=e=>{if(!menu.contains(e.target))closeFolderCtxMenu();};
+  folderCtxMenuKeyHandler=e=>{if(e.key==='Escape')closeFolderCtxMenu();};
+  folderCtxMenuScrollHandler=()=>closeFolderCtxMenu();
+  document.addEventListener('click',folderCtxMenuClickHandler);
+  document.addEventListener('keydown',folderCtxMenuKeyHandler);
+  document.addEventListener('scroll',folderCtxMenuScrollHandler,true);
+}
+
+function closeFolderCtxMenu(){
+  const menu=document.getElementById('folderCtxMenu');if(menu)menu.remove();
+  if(folderCtxMenuClickHandler)document.removeEventListener('click',folderCtxMenuClickHandler);
+  if(folderCtxMenuKeyHandler)document.removeEventListener('keydown',folderCtxMenuKeyHandler);
+  if(folderCtxMenuScrollHandler)document.removeEventListener('scroll',folderCtxMenuScrollHandler,true);
+  folderCtxMenuClickHandler=null;folderCtxMenuKeyHandler=null;folderCtxMenuScrollHandler=null;
+}
+
+function startGroupRename(folder){
+  const box=Array.from(document.querySelectorAll('.folder')).find(node=>node.dataset.folder===folder);
+  const head=box&&box.querySelector('.folderHead');if(!head)return;
+  const form=document.createElement('form');form.className='folderHead folderRename';
+  const input=document.createElement('input');input.type='text';input.value=folder;input.setAttribute('aria-label','새 그룹 이름');
+  const error=document.createElement('span');error.className='folderRenameError';error.setAttribute('role','alert');
+  form.appendChild(input);form.appendChild(error);head.replaceWith(form);
+  const cancel=()=>renderNav();
+  input.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();cancel();}});
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const checked=validateGroupName(input.value);
+    if(!checked.ok){error.textContent=checked.reason;input.focus();return;}
+    const target=checked.value;
+    if(target===folder){cancel();return;}
+    if(folderNames.some(name=>name.normalize('NFC')===target.normalize('NFC'))){error.textContent='같은 이름의 그룹이 이미 있습니다.';input.focus();return;}
+    const workflow=window.__slideWorkflow;
+    if(!workflow||typeof workflow.renameGroup!=='function'){error.textContent='워크플로 서버에서만 이름을 바꿀 수 있습니다.';return;}
+    input.disabled=true;error.textContent='이름을 바꾸는 중입니다…';
+    try{
+      const result=await workflow.renameGroup(folder,target);
+      const from=result.from||folder,to=result.to||target;
+      try{migrateLocalGroupState(from,to);}
+      catch(storageError){
+        let rollbackFailed=false;
+        try{await workflow.renameGroup(to,from);}catch(_rollbackError){rollbackFailed=true;}
+        showStoreFail('⚠️ 그룹 이름 저장소 이관에 실패했습니다. '+(rollbackFailed?'폴더 복구도 실패했으므로 도구를 닫지 말고 백업을 내보내세요.':'폴더 이름은 원래대로 복구했습니다.'));
+        throw new Error('브라우저 저장소를 옮기지 못했습니다: '+storageError.message);
+      }
+      let fresh;
+      try{fresh=await reloadSlideData();}
+      catch(reloadError){console.warn(reloadError);fresh=fallbackRenamedData(from,to);}
+      applySlideData(fresh);
+      if(typeof workflow.refreshStatus==='function')workflow.refreshStatus();
+    }catch(requestError){
+      if(!document.body.contains(form))return;
+      input.disabled=false;error.textContent=requestError.detail||requestError.message||'이름을 바꾸지 못했습니다.';input.focus();input.select();
+    }
+  });
+  input.focus();input.select();
 }
 
 function closeCtxMenu(){

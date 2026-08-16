@@ -52,6 +52,7 @@ UPLOAD_EXTS = (
 )
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_EXPORT_BODY_BYTES = 64 * 1024 * 1024
+MAX_RENAME_BODY_BYTES = 64 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 WINDOWS_RESERVED = frozenset(
     {"con", "prn", "aux", "nul"}
@@ -152,6 +153,45 @@ def safe_upload_name(raw_quoted: str) -> tuple[Optional[str], str]:
     if stem in WINDOWS_RESERVED or stem.split(".", 1)[0] in WINDOWS_RESERVED:
         return None, "운영체제 예약 파일명은 사용할 수 없습니다."
     return value, ""
+
+
+def safe_group_name(raw: object) -> tuple[Optional[str], str]:
+    """그룹 이름을 경로가 아닌 휴대 가능한 단일 basename으로 제한한다."""
+    if not isinstance(raw, str):
+        return None, "그룹 이름은 문자열이어야 합니다."
+    value = nfc(raw)
+    if not value or value in {".", ".."} or "\x00" in value:
+        return None, "비어 있지 않은 단일 그룹 이름을 사용하세요."
+    if os.path.isabs(value) or "/" in value or "\\" in value:
+        return None, "경로가 아닌 그룹 이름만 사용할 수 있습니다."
+    if re.match(r"^[A-Za-z]:", value) or Path(value).name != value:
+        return None, "드라이브나 경로가 포함된 그룹 이름은 사용할 수 없습니다."
+    if value.startswith("."):
+        return None, "점으로 시작하는 그룹 이름은 사용할 수 없습니다."
+    if any(unicodedata.category(char) == "Cc" for char in value):
+        return None, "제어 문자가 포함된 그룹 이름은 사용할 수 없습니다."
+    if any(char in value for char in "#?%"):
+        return None, "그룹 이름에 #, ?, % 문자를 사용할 수 없습니다."
+    if any(char in value for char in '<>:"|*'):
+        return None, "운영체제에서 금지된 문자가 포함되어 있습니다."
+    if value.endswith((" ", ".")):
+        return None, "그룹 이름 끝의 공백이나 점은 사용할 수 없습니다."
+    if value.split(".", 1)[0].casefold() in WINDOWS_RESERVED:
+        return None, "운영체제 예약 그룹 이름은 사용할 수 없습니다."
+    return value, ""
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """같은 디렉터리의 임시 파일을 거쳐 파일 하나를 원자적으로 교체한다."""
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temp.open("xb") as target:
+            target.write(data)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _sha256_file(path: Path) -> str:
@@ -655,6 +695,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
         routes = {
             "/api/upload": self.api_upload,
             "/api/open-folder": self.api_open_folder,
+            "/api/rename-group": self.api_rename_group,
             "/api/prepare": self.api_prepare,
             "/api/export-pdf": self.api_export_pdf,
             "/api/job/cancel": self.api_job_cancel,
@@ -821,6 +862,180 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             self._error(500, "upload_failed", f"파일을 저장하지 못했습니다: {exc}")
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def api_rename_group(self) -> None:
+        payload = self._read_json_body(MAX_RENAME_BODY_BYTES)
+        if payload is None:
+            return
+        source_name, source_reason = safe_group_name(payload.get("from"))
+        target_name, target_reason = safe_group_name(payload.get("to"))
+        if source_name is None:
+            self._error(400, "bad_group_name", source_reason)
+            return
+        if target_name is None:
+            self._error(400, "bad_group_name", target_reason)
+            return
+
+        assert self.workflow.work is not None
+        try:
+            source_matches = [
+                path
+                for path in self.workflow.work.iterdir()
+                if nfc(path.name) == source_name
+            ]
+            target_matches = [
+                path
+                for path in self.workflow.work.iterdir()
+                if nfc(path.name) == target_name
+            ]
+        except OSError as exc:
+            self._error(500, "group_read_failed", f"그룹 목록을 읽지 못했습니다: {exc}")
+            return
+        source = source_matches[0] if len(source_matches) == 1 else self.workflow.work / source_name
+        source_disk_name = source.name
+        target = self.workflow.work / target_name
+        plan_path = self.workflow.work / "worktree.json"
+        manifest_script = self.workflow.work / "slide_tool" / "gen_manifest.py"
+        data_path = self.workflow.work / "slide_tool" / "data.js"
+
+        # 잡 시작과 이름 변경이 서로 엇갈리지 않도록 JobManager의 시작 잠금을
+        # 트랜잭션 전체에 유지한다. 실행 중인 잡은 여기서 즉시 거부한다.
+        with self.workflow.jobs.lock:
+            current = self.workflow.jobs.current
+            if current is not None and current.state == "running":
+                self._error(409, "busy", "다른 작업이 실행 중입니다.")
+                return
+            if (
+                len(source_matches) != 1
+                or not source.is_dir()
+                or source.is_symlink()
+                or not (source / "img").is_dir()
+                or (source / "img").is_symlink()
+            ):
+                self._error(404, "group_not_found", "img 폴더가 있는 현재 그룹을 찾지 못했습니다.")
+                return
+            if target_matches or os.path.lexists(target):
+                self._error(409, "group_exists", "같은 이름의 대상이 이미 있습니다.")
+                return
+            if not manifest_script.is_file():
+                self._error(500, "manifest_missing", "목록 생성 스크립트를 찾지 못했습니다.")
+                return
+
+            plan_original: Optional[bytes] = None
+            plan_updated: Optional[bytes] = None
+            if plan_path.is_file():
+                try:
+                    plan_original = plan_path.read_bytes()
+                    plan_doc = json.loads(plan_original.decode("utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    self._error(500, "worktree_invalid", f"worktree.json을 읽지 못했습니다: {exc}")
+                    return
+                if not isinstance(plan_doc, dict):
+                    self._error(500, "worktree_invalid", "worktree.json 최상위 값은 객체여야 합니다.")
+                    return
+                groups_present = "groups" in plan_doc
+                groups = plan_doc.get("groups")
+                if groups_present and not isinstance(groups, dict):
+                    self._error(500, "worktree_invalid", "worktree.json의 groups는 객체여야 합니다.")
+                    return
+                source_plan_names = [name for name in groups or {} if nfc(str(name)) == source_name]
+                target_plan_names = [name for name in groups or {} if nfc(str(name)) == target_name]
+                if groups_present:
+                    assert isinstance(groups, dict)
+                    if len(source_plan_names) != 1:
+                        self._error(
+                            409,
+                            "worktree_mismatch",
+                            "worktree.json에서 현재 그룹을 하나로 확인하지 못했습니다.",
+                        )
+                        return
+                    source_plan_name = source_plan_names[0]
+                    if target_plan_names:
+                        self._error(409, "group_exists", "worktree.json에 같은 대상 그룹이 이미 있습니다.")
+                        return
+                    plan_doc["groups"] = {
+                        target_name if name == source_plan_name else name: files
+                        for name, files in groups.items()
+                    }
+                    plan_updated = json.dumps(
+                        plan_doc, ensure_ascii=False, indent=2
+                    ).encode("utf-8")
+
+            try:
+                data_original = data_path.read_bytes() if data_path.is_file() else None
+            except OSError as exc:
+                self._error(500, "manifest_read_failed", f"기존 data.js를 읽지 못했습니다: {exc}")
+                return
+
+            renamed = False
+            plan_changed = False
+            manifest_started = False
+            target_disk_name = target_name
+            try:
+                source.rename(target)
+                renamed = True
+                if plan_updated is not None:
+                    atomic_write_bytes(plan_path, plan_updated)
+                    plan_changed = True
+                child_env = dict(os.environ)
+                child_env["PYTHONIOENCODING"] = "utf-8:replace"
+                child_env["PYTHONUTF8"] = "1"
+                manifest_started = True
+                result = subprocess.run(
+                    [sys.executable, str(manifest_script)],
+                    cwd=str(manifest_script.parent),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=child_env,
+                    timeout=30,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    detail = result.stdout.strip() or f"종료코드 {result.returncode}"
+                    raise OSError(f"data.js 갱신 실패: {detail}")
+                target_disk_name = next(
+                    (
+                        path.name
+                        for path in self.workflow.work.iterdir()
+                        if nfc(path.name) == target_name
+                    ),
+                    target_name,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                rollback_errors: list[str] = []
+                if manifest_started:
+                    try:
+                        if data_original is None:
+                            data_path.unlink(missing_ok=True)
+                        else:
+                            atomic_write_bytes(data_path, data_original)
+                    except OSError as rollback_exc:
+                        rollback_errors.append(f"data.js: {rollback_exc}")
+                if plan_changed and plan_original is not None:
+                    try:
+                        atomic_write_bytes(plan_path, plan_original)
+                    except OSError as rollback_exc:
+                        rollback_errors.append(f"worktree.json: {rollback_exc}")
+                if renamed:
+                    try:
+                        if os.path.lexists(target) and not os.path.lexists(source):
+                            target.rename(source)
+                    except OSError as rollback_exc:
+                        rollback_errors.append(f"폴더: {rollback_exc}")
+                if rollback_errors:
+                    self._error(
+                        500,
+                        "rename_rollback_failed",
+                        f"그룹 이름 변경과 복구에 실패했습니다: {exc}; " + "; ".join(rollback_errors),
+                    )
+                else:
+                    self._error(500, "rename_failed", f"그룹 이름을 바꾸지 못했습니다: {exc}")
+                return
+
+        self._send_json({"ok": True, "from": source_disk_name, "to": target_disk_name})
 
     def _job_prerequisites(self) -> tuple[Optional[Path], dict[str, object]]:
         assert self.workflow.pkg_root is not None

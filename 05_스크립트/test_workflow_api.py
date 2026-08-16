@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 from pathlib import Path
 from typing import Callable, Optional
@@ -107,6 +108,34 @@ def make_pkg(temp: Path) -> Path:
     )
     make_fake_venv(pkg)
     return pkg
+
+
+def make_group(pkg: Path, name: str, image_name: str = "GROUP.jpg") -> Path:
+    image_dir = pkg / "02_작업장" / name / "img"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (120, 90), (80, 160, 60)).save(image_dir / image_name)
+    plan = {
+        "_type": "slide_tool_worktree",
+        "_version": 2,
+        "root": ".",
+        "source": "../01_원본사진",
+        "groups": {name: [image_name]},
+    }
+    (pkg / "02_작업장" / "worktree.json").write_text(
+        json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, str(pkg / "02_작업장" / "slide_tool" / "gen_manifest.py")],
+        cwd=pkg,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout + result.stderr).strip()
+    return image_dir.parent
 
 
 def http_request(
@@ -608,6 +637,209 @@ def run_upload() -> list[bool]:
     return results
 
 
+def run_rename() -> list[bool]:
+    results: list[bool] = []
+    processes: list[subprocess.Popen[str]] = []
+    with tempfile.TemporaryDirectory(prefix="workflow_rename_") as temp_dir:
+        temp = Path(temp_dir)
+        pkg = make_pkg(temp)
+        work = pkg / "02_작업장"
+        original_name = "01_원본"
+        renamed_name = "01_발표"
+        make_group(pkg, original_name)
+        try:
+            _, base, token = start_server(pkg, processes)
+
+            def r1() -> None:
+                status, _, payload = json_post(
+                    base,
+                    "/api/rename-group",
+                    token,
+                    {"from": original_name, "to": renamed_name},
+                )
+                assert status == 200 and payload.get("ok") is True, payload
+                assert unicodedata.normalize("NFC", str(payload.get("from"))) == original_name
+                assert unicodedata.normalize("NFC", str(payload.get("to"))) == renamed_name
+                assert not (work / original_name).exists()
+                assert (work / renamed_name / "img" / "GROUP.jpg").is_file()
+                plan = json.loads((work / "worktree.json").read_text(encoding="utf-8"))
+                assert list(plan["groups"]) == [renamed_name], plan
+                data_js = unicodedata.normalize(
+                    "NFC", (work / "slide_tool" / "data.js").read_text(encoding="utf-8")
+                )
+                assert f"../{renamed_name}/img/GROUP.jpg" in data_js
+                assert f"../{original_name}/img/GROUP.jpg" not in data_js
+
+            results.append(report("R1 정상 rename·계획·목록 갱신", r1))
+
+            def r2() -> None:
+                for bad in ("../x", "/tmp/x", "a/b", "C:\\x"):
+                    status, _, payload = json_post(
+                        base,
+                        "/api/rename-group",
+                        token,
+                        {"from": renamed_name, "to": bad},
+                    )
+                    assert status == 400 and payload.get("error") == "bad_group_name", (
+                        bad,
+                        status,
+                        payload,
+                    )
+                assert (work / renamed_name / "img").is_dir()
+
+            results.append(report("R2 경로형 그룹 이름 차단", r2))
+
+            def r3() -> None:
+                for bad in ("CON", "a#b", "a?b", "말미."):
+                    status, _, payload = json_post(
+                        base,
+                        "/api/rename-group",
+                        token,
+                        {"from": renamed_name, "to": bad},
+                    )
+                    assert status == 400 and payload.get("error") == "bad_group_name", (
+                        bad,
+                        status,
+                        payload,
+                    )
+                assert (work / renamed_name / "img").is_dir()
+
+            results.append(report("R3 예약어·금지문자 그룹 이름 차단", r3))
+
+            def r4() -> None:
+                existing = work / "02_기존" / "img"
+                existing.mkdir(parents=True)
+                status, _, payload = json_post(
+                    base,
+                    "/api/rename-group",
+                    token,
+                    {"from": renamed_name, "to": "02_기존"},
+                )
+                assert status == 409 and payload.get("error") == "group_exists", payload
+                assert (work / renamed_name / "img" / "GROUP.jpg").is_file()
+                assert existing.is_dir()
+
+            results.append(report("R4 대상 충돌 시 원본 폴더 불변", r4))
+
+            def r5() -> None:
+                body = json.dumps(
+                    {"from": renamed_name, "to": "03_인증검사"}, ensure_ascii=False
+                ).encode("utf-8")
+                no_token, _, _ = http_request(
+                    "POST",
+                    base + "/api/rename-group",
+                    headers={"Origin": base, "Content-Type": "application/json"},
+                    body=body,
+                )
+                no_origin, _, _ = http_request(
+                    "POST",
+                    base + "/api/rename-group",
+                    headers={
+                        "X-Workflow-Token": token,
+                        "Content-Type": "application/json",
+                    },
+                    body=body,
+                )
+                assert (no_token, no_origin) == (401, 403)
+                assert (work / renamed_name / "img" / "GROUP.jpg").is_file()
+
+            results.append(report("R5 토큰·Origin 없는 rename 차단", r5))
+
+            def r6() -> None:
+                busy_pkg = make_pkg(temp / "busy_case")
+                busy_group = "01_실행중"
+                make_group(busy_pkg, busy_group)
+                prepare_script = busy_pkg / "05_스크립트" / "prepare_photos.py"
+                prepare_script.unlink()
+                prepare_script.write_text(
+                    "import time\nprint('busy rename test', flush=True)\ntime.sleep(30)\n",
+                    encoding="utf-8",
+                )
+                _, busy_base, busy_token = start_server(busy_pkg, processes)
+                start_status, _, start_payload = json_post(
+                    busy_base,
+                    "/api/prepare",
+                    busy_token,
+                    {"regroup": False, "gapMinutes": 20},
+                )
+                assert start_status == 202, start_payload
+                rename_status, _, rename_payload = json_post(
+                    busy_base,
+                    "/api/rename-group",
+                    busy_token,
+                    {"from": busy_group, "to": "02_거부"},
+                )
+                assert rename_status == 409 and rename_payload.get("error") == "busy", (
+                    rename_status,
+                    rename_payload,
+                )
+                assert (busy_pkg / "02_작업장" / busy_group / "img").is_dir()
+                cancel_status, _, cancel_payload = json_post(
+                    busy_base, "/api/job/cancel", busy_token, {}
+                )
+                assert cancel_status == 200, cancel_payload
+
+                rollback_pkg = make_pkg(temp / "rollback_case")
+                rollback_work = rollback_pkg / "02_작업장"
+                rollback_from = "01_복구검사"
+                rollback_to = "01_복구됨"
+                make_group(rollback_pkg, rollback_from)
+                plan_path = rollback_work / "worktree.json"
+                data_path = rollback_work / "slide_tool" / "data.js"
+                plan_before = plan_path.read_bytes()
+                data_before = data_path.read_bytes()
+                (rollback_work / "slide_tool" / "gen_manifest.py").write_text(
+                    "raise SystemExit(7)\n", encoding="utf-8"
+                )
+                _, rollback_base, rollback_token = start_server(rollback_pkg, processes)
+                rollback_status, _, rollback_payload = json_post(
+                    rollback_base,
+                    "/api/rename-group",
+                    rollback_token,
+                    {"from": rollback_from, "to": rollback_to},
+                )
+                assert rollback_status == 500, rollback_payload
+                assert rollback_payload.get("error") == "rename_failed", rollback_payload
+                assert (rollback_work / rollback_from / "img" / "GROUP.jpg").is_file()
+                assert not (rollback_work / rollback_to).exists()
+                assert plan_path.read_bytes() == plan_before
+                assert data_path.read_bytes() == data_before
+
+                mismatch_pkg = make_pkg(temp / "mismatch_case")
+                mismatch_work = mismatch_pkg / "02_작업장"
+                mismatch_from = "01_불일치"
+                mismatch_to = "01_거부"
+                make_group(mismatch_pkg, mismatch_from)
+                mismatch_plan = mismatch_work / "worktree.json"
+                mismatch_data = mismatch_work / "slide_tool" / "data.js"
+                plan_doc = json.loads(mismatch_plan.read_text(encoding="utf-8"))
+                plan_doc["groups"] = {"09_다른계획": ["GROUP.jpg"]}
+                mismatch_plan.write_text(
+                    json.dumps(plan_doc, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                mismatch_plan_before = mismatch_plan.read_bytes()
+                mismatch_data_before = mismatch_data.read_bytes()
+                _, mismatch_base, mismatch_token = start_server(mismatch_pkg, processes)
+                mismatch_status, _, mismatch_payload = json_post(
+                    mismatch_base,
+                    "/api/rename-group",
+                    mismatch_token,
+                    {"from": mismatch_from, "to": mismatch_to},
+                )
+                assert mismatch_status == 409, mismatch_payload
+                assert mismatch_payload.get("error") == "worktree_mismatch", mismatch_payload
+                assert (mismatch_work / mismatch_from / "img" / "GROUP.jpg").is_file()
+                assert not (mismatch_work / mismatch_to).exists()
+                assert mismatch_plan.read_bytes() == mismatch_plan_before
+                assert mismatch_data.read_bytes() == mismatch_data_before
+
+            results.append(report("R6 잡 실행 중 rename busy", r6))
+        finally:
+            for process in processes:
+                stop_process(process)
+    return results
+
+
 def make_backup(
     keys: list[str],
     *,
@@ -940,14 +1172,14 @@ def run_job() -> list[bool]:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=("auth", "upload", "job"))
+    parser.add_argument("--only", choices=("auth", "upload", "rename", "job"))
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    runners = {"auth": run_auth, "upload": run_upload, "job": run_job}
-    selected = [args.only] if args.only else ["auth", "upload", "job"]
+    runners = {"auth": run_auth, "upload": run_upload, "rename": run_rename, "job": run_job}
+    selected = [args.only] if args.only else ["auth", "upload", "rename", "job"]
     results: list[bool] = []
     try:
         for name in selected:

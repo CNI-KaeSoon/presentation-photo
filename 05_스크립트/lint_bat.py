@@ -28,6 +28,16 @@ UNCONDITIONAL_EXIT_RE = re.compile(
     r"^\s*@?(?:exit(?:\s+/b)?|goto\s+:eof)\b",
     re.IGNORECASE,
 )
+DELEGATE_BAT_RE = re.compile(
+    r'^\s*@?call\s+"%~dp0[^"%]+\.bat"\s*$',
+    re.IGNORECASE,
+)
+FOR_DELEGATE_BAT_RE = re.compile(
+    r'^\s*@?for\s+/d\s+%%[A-Za-z]\s+in\s+\("%~dp0[^"%]*\*[^"%]*"\)\s+'
+    r'do\s+for\s+%%[A-Za-z]\s+in\s+\("%%~f[A-Za-z]\\\*\.bat"\)\s+'
+    r'do\s+call\s+"%%~f[A-Za-z]"\s*$',
+    re.IGNORECASE,
+)
 
 
 def _line_for_offset(data: bytes, offset: int) -> int:
@@ -99,8 +109,12 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
             if key in seen_refs:
                 continue
             seen_refs.add(key)
-            target = path.parent / Path(referenced.replace("\\", "/"))
-            if not target.exists():
+            relative = referenced.replace("\\", "/")
+            if any(char in relative for char in "*?["):
+                exists = any(path.parent.glob(relative))
+            else:
+                exists = (path.parent / Path(relative)).exists()
+            if not exists:
                 issues.append((line_no, f"L5 참조 파일이 없음: %~dp0{referenced}"))
 
     terminals = []
@@ -119,7 +133,12 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
                 issues.append((index + 1, "L6 종료 직전에 pause가 없음"))
     if not terminals:
         significant = _significant(lines)
-        if not significant or significant[-1][1].lower() != "pause":
+        last = significant[-1][1] if significant else ""
+        if not significant or (
+            last.lower() != "pause"
+            and not DELEGATE_BAT_RE.match(last)
+            and not FOR_DELEGATE_BAT_RE.match(last)
+        ):
             issues.append((len(lines) or 1, "L6 파일 말미 종료 경로에 pause가 없음"))
     else:
         significant = _significant(lines)

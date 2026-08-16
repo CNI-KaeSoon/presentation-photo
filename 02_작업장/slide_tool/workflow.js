@@ -17,6 +17,8 @@
     cancelling: false,
     collapsed: false,
     collapseReady: false,
+    expandedStep: null,
+    manualStep: false,
     disabled: false,
     dndBound: false
   };
@@ -61,7 +63,11 @@
       '.wfSummary{font-size:12px;color:var(--mut);margin-top:5px}',
       '.wfBody{margin-top:12px;border-top:1px solid var(--line)}',
       '#wfPanel.wfCollapsed .wfBody{display:none}',
-      '.wfRow{display:grid;grid-template-columns:minmax(120px,.28fr) minmax(280px,1fr);gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}',
+      '.wfAccordion{border-bottom:1px solid var(--line)}',
+      '.wfAccordionHead{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0}',
+      '.wfAccordionToggle{min-width:62px}',
+      '.wfAccordionContent[hidden]{display:none}',
+      '.wfRow{display:grid;grid-template-columns:minmax(120px,.28fr) minmax(280px,1fr);gap:14px;padding:3px 0 13px}',
       '.wfRow h3{font-size:13px;margin:1px 0 3px}',
       '.wfRowInfo{font-size:12px;color:var(--mut)}',
       '.wfDrop{border:2px dashed #9bb4d5;border-radius:8px;background:#f8fafc;padding:18px;text-align:center;cursor:pointer;transition:.15s}',
@@ -94,6 +100,7 @@
       '.wfModal h2{font-size:17px;margin:0 0 9px}',
       '.wfModal p{font-size:13px;margin:7px 0}',
       '.wfModalActions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}',
+      'body.wfCorrectionCollapsed #editor,body.wfCorrectionCollapsed #empty{display:none!important}',
       '@media(max-width:760px){.wfRow{grid-template-columns:1fr}.wfDrop{padding:13px}}'
     ].join('\n');
     document.head.appendChild(style);
@@ -118,7 +125,6 @@
       el('span', {className: 'wfStep', text: '④ PDF'})
     ];
     headLeft.appendChild(title);
-    headLeft.appendChild(el('div', {className: 'wfSteps'}, ui.steps));
     headLeft.appendChild(ui.summary);
     ui.collapseBtn = el('button', {type: 'button', className: 'btn sm', text: '접기'});
     ui.collapseBtn.addEventListener('click', function () {
@@ -172,7 +178,7 @@
     fileWork.appendChild(ui.srcCount);
     ui.uploadResults = el('div', {className: 'wfUploadResults'});
     fileWork.appendChild(ui.uploadResults);
-    ui.body.appendChild(el('div', {className: 'wfRow'}, [fileInfo, fileWork]));
+    var fileRow = el('div', {className: 'wfRow'}, [fileInfo, fileWork]);
 
     var prepareInfo = el('div', {}, [
       el('h3', {text: '② 사진 준비'}),
@@ -193,7 +199,7 @@
     ui.envInfo = el('div', {className: 'wfEnv', text: '환경 상태 확인 중'});
     prepareWork.appendChild(ui.groupInfo);
     prepareWork.appendChild(ui.envInfo);
-    ui.body.appendChild(el('div', {className: 'wfRow'}, [prepareInfo, prepareWork]));
+    var prepareRow = el('div', {className: 'wfRow'}, [prepareInfo, prepareWork]);
 
     var exportInfo = el('div', {}, [
       el('h3', {text: '④ PDF 만들기'}),
@@ -216,7 +222,28 @@
       className: 'wfEnv',
       text: '기존 “백업 내보내기” 다운로드도 오프라인 백업용으로 계속 사용할 수 있습니다.'
     }));
-    ui.body.appendChild(el('div', {className: 'wfRow'}, [exportInfo, exportWork]));
+    var exportRow = el('div', {className: 'wfRow'}, [exportInfo, exportWork]);
+
+    ui.accordions = [];
+    [fileRow, prepareRow, null, exportRow].forEach(function (content, index) {
+      var section = el('section', {className: 'wfAccordion', 'data-step': String(index + 1)});
+      var toggle = el('button', {
+        type: 'button',
+        className: 'btn sm wfAccordionToggle',
+        text: '펼치기',
+        'aria-expanded': 'false'
+      });
+      toggle.addEventListener('click', function () { setExpandedStep(index, true); });
+      section.appendChild(el('div', {className: 'wfAccordionHead'}, [ui.steps[index], toggle]));
+      var contentBox = null;
+      if (content) {
+        contentBox = el('div', {className: 'wfAccordionContent'}, [content]);
+        contentBox.hidden = true;
+        section.appendChild(contentBox);
+      }
+      ui.accordions.push({section: section, content: contentBox, toggle: toggle});
+      ui.body.appendChild(section);
+    });
 
     ui.progress = el('div', {className: 'wfProgress'});
     ui.progressLabel = el('strong', {text: '대기'});
@@ -316,6 +343,28 @@
     return error && (error.status === 404 || error.status === 503);
   }
 
+  function renameAvailability() {
+    if (state.disabled) {
+      return {enabled: false, reason: '시작 파일로 연 워크플로 서버에서만 이름을 바꿀 수 있습니다.'};
+    }
+    if (!TOKEN || !state.status) {
+      return {enabled: false, reason: '워크플로 서버 연결을 확인하는 중입니다.'};
+    }
+    if (isBusy() || state.uploading) {
+      return {enabled: false, reason: '실행 중인 작업이 끝난 뒤 이름을 바꾸세요.'};
+    }
+    return {enabled: true, reason: ''};
+  }
+
+  function renameGroup(from, to) {
+    var availability = renameAvailability();
+    if (!availability.enabled) return Promise.reject(new Error(availability.reason));
+    return api('/api/rename-group', {
+      method: 'POST',
+      json: {from: from, to: to}
+    });
+  }
+
   function fetchToken() {
     return api('/api/token').then(function (payload) {
       if (!payload || payload.ok !== true || typeof payload.token !== 'string') {
@@ -332,6 +381,7 @@
       if (payload.workflow === false) {
         state.disabled = true;
         ui.panel.hidden = true;
+        document.body.classList.remove('wfCorrectionCollapsed');
         return null;
       }
       state.status = payload;
@@ -351,6 +401,7 @@
       if (unavailable(error)) {
         state.disabled = true;
         ui.panel.hidden = true;
+        document.body.classList.remove('wfCorrectionCollapsed');
         return null;
       }
       showBanner('서버 상태를 읽지 못했습니다 — 시작 파일로 도구를 다시 여세요.\n' + error.message, 'error');
@@ -372,7 +423,7 @@
   }
 
   function renderPanel(status) {
-    var running = isBusy() || state.uploading;
+    var running = isBusy() || state.uploading || !!(status.job && status.job.state === 'running');
     var classes = stepClasses(status);
     ui.steps.forEach(function (node, index) {
       node.className = 'wfStep' + (classes[index] ? ' ' + classes[index] : '');
@@ -405,12 +456,13 @@
       var saved = null;
       try { saved = localStorage.getItem(COLLAPSE_KEY); } catch (_error) { saved = null; }
       if (saved === null) {
-        state.collapsed = !!status.dataJs && !(status.job && status.job.state === 'running');
+        state.collapsed = false;
       }
       else state.collapsed = saved === '1';
       state.collapseReady = true;
       setCollapsed(state.collapsed, false);
     }
+    if (!state.manualStep) setExpandedStep(automaticStep(status), false);
     setControlsDisabled(running || state.disabled);
     renderProgress();
   }
@@ -436,9 +488,41 @@
     ui.panel.classList.toggle('wfCollapsed', state.collapsed);
     setText(ui.collapseBtn, state.collapsed ? '펼치기' : '접기');
     ui.collapseBtn.setAttribute('aria-expanded', state.collapsed ? 'false' : 'true');
+    syncCorrectionVisibility();
     if (persist) {
       try { localStorage.setItem(COLLAPSE_KEY, state.collapsed ? '1' : '0'); } catch (_error) {}
     }
+  }
+
+  function automaticStep(status) {
+    var job = status.job && status.job.state === 'running' ? status.job : state.job;
+    if (state.uploading) return 0;
+    if (job && job.state === 'running') return job.kind === 'export' ? 3 : 1;
+    if (Number(status.srcCount || 0) === 0) return 0;
+    if (!Array.isArray(status.groups) || status.groups.length === 0) return 1;
+    return 2;
+  }
+
+  function setExpandedStep(index, manual) {
+    if (manual) {
+      state.manualStep = true;
+      state.expandedStep = state.expandedStep === index ? null : index;
+    } else {
+      state.expandedStep = index;
+    }
+    (ui.accordions || []).forEach(function (item, itemIndex) {
+      var open = state.expandedStep === itemIndex;
+      if (item.content) item.content.hidden = !open;
+      item.section.classList.toggle('open', open);
+      setText(item.toggle, open ? '접기' : '펼치기');
+      item.toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    syncCorrectionVisibility();
+  }
+
+  function syncCorrectionVisibility() {
+    var hideCorrection = !!ui.panel && !ui.panel.hidden && !state.collapsed && state.expandedStep !== 2;
+    document.body.classList.toggle('wfCorrectionCollapsed', hideCorrection);
   }
 
   function isBusy() {
@@ -484,6 +568,7 @@
     var files = Array.from(fileList || []);
     if (!files.length || state.uploading || state.disabled) return;
     state.uploading = true;
+    if (!state.manualStep) setExpandedStep(0, false);
     state.uploadPercent = 0;
     state.logs = [];
     setText(ui.uploadResults, '');
@@ -566,6 +651,7 @@
   function startJob(path, payload, kind) {
     state.uploadPercent = 0;
     state.uploadLabel = '';
+    if (!state.manualStep) setExpandedStep(kind === 'export' ? 3 : 1, false);
     setControlsDisabled(true);
     api(path, {method: 'POST', json: payload}).then(function (response) {
       state.job = response.job || {kind: kind, state: 'running'};
@@ -735,6 +821,7 @@
       state.disabled = true;
       if (unavailable(error)) {
         ui.panel.hidden = true;
+        document.body.classList.remove('wfCorrectionCollapsed');
         return;
       }
       ui.panel.hidden = false;
@@ -747,7 +834,11 @@
     });
   }
 
-  window.__slideWorkflow = {refreshStatus: refreshStatus};
+  window.__slideWorkflow = {
+    refreshStatus: refreshStatus,
+    renameAvailability: renameAvailability,
+    renameGroup: renameGroup
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
