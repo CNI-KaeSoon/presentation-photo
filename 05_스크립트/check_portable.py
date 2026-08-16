@@ -14,11 +14,21 @@ EXCLUDED_DIRS = {".git", ".venv", "__pycache__", ".omc", ".omx", ".codex", ".cla
 # 이 파일은 탐지 문자열 자체를 정의하므로 자기 자신은 검사할 수 없다.
 EXCLUDED_FILES = {
     "05_스크립트/check_portable.py": "검사 규칙 정의",
+    # 아래는 실행하면 생기는 런타임 산출물이다. 사용자 기기의 절대경로가 들어가는 것이
+    # 정상이고 .gitignore 로 배포에서 제외되므로 검사 대상이 아니다.
+    # (이걸 검사하면 환경 점검을 한 사용자는 누구나 FAIL 을 보게 된다.)
+    "00_시작/_env_status.json": "런타임 생성물 · gitignore 대상",
+    "02_작업장/worktree.json": "런타임 생성물 · gitignore 대상",
+    "02_작업장/slide_tool/data.js": "런타임 생성물 · gitignore 대상",
 }
 # 공개 라이선스의 승인된 저작권자 표기만 예외로 둔다.
 ALLOWED_MARKERS = {
     ("LICENSE", "kaesoon"): "승인된 MIT 저작권자 표기",
 }
+
+# 이 도구의 공개 저장소 주소. 문서의 설치 안내에 반드시 들어간다.
+PUBLIC_REPO_URL = re.compile(
+    r"https://github\.com/CNI-KaeSoon/presentation-photo[^\s)\"']*", re.IGNORECASE)
 
 CONFIG_EXTENSIONS = {".py", ".json", ".toml", ".ini", ".cfg", ".yaml", ".yml"}
 HOME_PATTERNS = (
@@ -69,6 +79,9 @@ def violations(root: Path):
     for path, rel, text in iter_text_files(root):
         for lineno, line in enumerate(text.splitlines(), 1):
             checks = []
+            # 공개 저장소 주소는 문서에 반드시 들어가야 하는 정보다. 계정명이 개발자명과
+            # 겹치더라도 위반이 아니므로, 마커 검사 전에 이 URL 부분만 지운 사본으로 본다.
+            line = PUBLIC_REPO_URL.sub("", line)
             if path.suffix.lower() in CONFIG_EXTENSIONS:
                 if any(pattern.search(line) for pattern in HOME_PATTERNS):
                     checks.append("사용자 홈 절대경로")

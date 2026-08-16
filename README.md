@@ -2,6 +2,33 @@
 
 `01_원본사진`에 발표 화면 사진을 넣으면, 브라우저에서 원근·색을 보정한 고해상도 PDF가 `03_결과물`에 만들어집니다.
 
+## 📥 내려받기
+
+### 방법 1 — ZIP (git 없어도 됨, 가장 쉬움)
+
+[**여기를 눌러 ZIP 내려받기**](https://github.com/CNI-KaeSoon/presentation-photo/archive/refs/heads/main.zip)
+→ 압축을 풀고, 나온 폴더(`presentation-photo-main`)를 원하는 위치로 옮깁니다.
+
+명령으로 받으려면 (Windows 10 이상은 `curl`·`tar`가 기본 내장):
+
+```cmd
+curl -L -o slidetool.zip https://github.com/CNI-KaeSoon/presentation-photo/archive/refs/heads/main.zip
+tar -xf slidetool.zip
+cd presentation-photo-main
+```
+
+### 방법 2 — git clone
+
+```bash
+git clone https://github.com/CNI-KaeSoon/presentation-photo.git
+cd presentation-photo
+```
+
+> 폴더는 **어디에 두어도 됩니다.** 경로에 한글·공백이 있어도 동작합니다.
+> 나중에 폴더를 옮겨도 그대로 동작합니다.
+
+---
+
 ## 🚀 시작하기 — 사람용
 
 - Windows: `00_시작\시작하기.bat`을 더블클릭합니다.
@@ -62,6 +89,76 @@ python3 00_시작/serve_tool.py
 ---
 
 ## 🤖 AI 에이전트(코덱스·클로드)용 안내
+
+### 에이전트용 설치 절차 (비대화형)
+
+`시작하기.bat` / `launch.py` 는 **메뉴를 고르는 대화형**이라 에이전트가 진행할 수 없다.
+아래 스크립트를 직접 호출하라. 전부 비대화형이고 종료코드로 성공/실패를 판정할 수 있다.
+
+**Windows (cmd) 기준. macOS·Linux 는 `python` → `python3`, `\` → `/`, `.venv\Scripts\` → `.venv/bin/`.**
+
+```cmd
+REM 1) 내려받기 — git 이 없으면 curl+tar (Windows 10 이상 내장)
+curl -L -o slidetool.zip https://github.com/CNI-KaeSoon/presentation-photo/archive/refs/heads/main.zip
+tar -xf slidetool.zip
+cd presentation-photo-main
+
+REM 2) 파이썬 확인 — 없으면 https://www.python.org/downloads/ (Add python.exe to PATH 체크)
+python --version
+
+REM 3) 환경 자동 셋업 (venv 생성 + 패키지 설치, 질문 없음)
+python 00_시작\envcheck.py --yes --pkg-root .
+
+REM 4) 셋업 검증 — ok:true 와 workers 수가 나오면 성공
+python 00_시작\envcheck.py --json --pkg-root .
+```
+
+3)의 종료코드가 `0` 이면 성공이다. 이후 무거운 작업은 **venv 파이썬**으로 호출한다:
+`.venv\Scripts\python.exe` (Windows) / `.venv/bin/python3` (그 외).
+
+```cmd
+REM 5) 사진을 01_원본사진\ 에 넣은 뒤 — 그룹 나누기 → 축소본 → 목록
+.venv\Scripts\python.exe 05_스크립트\init_worktree.py --src 01_원본사진 --out 02_작업장 --by-gap 20
+.venv\Scripts\python.exe 05_스크립트\prepare_photos.py --plan 02_작업장\worktree.json --workers 0
+python 02_작업장\slide_tool\gen_manifest.py
+
+REM 6) 브라우저 도구 서버 (127.0.0.1 전용, 창 닫으면 자동 종료)
+python 00_시작\serve_tool.py
+```
+
+`serve_tool.py` 는 브라우저를 자동으로 연다. 열지 않으려면 `--no-open`,
+포트를 바꾸려면 `--port N`, 자동 종료를 끄려면 `--no-watchdog`.
+
+사람이 브라우저에서 보정하고 `백업 내보내기`를 누른 뒤:
+
+```cmd
+REM 7) 백업 JSON → 03_결과물 에 고해상도 PDF
+.venv\Scripts\python.exe 05_스크립트\export_pdf.py ^
+    --backup "%USERPROFILE%\Downloads\slide_tool_backup_....json" ^
+    --root 02_작업장 --src-dir 01_원본사진 --out 03_결과물 --workers 0
+```
+
+#### 설치 성공 판정
+
+| 확인 | 명령 | 성공 기준 |
+|---|---|---|
+| 환경 | `python 00_시작\envcheck.py --json --pkg-root .` | 종료코드 0, JSON 에 `"ok":true` |
+| 경로 독립성 | `python 05_스크립트\check_portable.py` | `PORTABLE: PASS` |
+| 보안 회귀 | `.venv\Scripts\python.exe 05_스크립트\test_security.py` | `SECURITY: ALL PASS` |
+| 서버 수명 | `python 05_스크립트\test_serve_tool.py` | `SERVE: ALL PASS` |
+| 색연산 일치 | `.venv\Scripts\python.exe 05_스크립트\test_color_parity.py` | `RESULT: ALL PASS` |
+
+#### 에이전트가 흔히 막히는 지점
+
+- **`index.html` 을 직접 열면 안 된다.** `file://` 에서는 캔버스가 tainted 되어 보정이
+  `SecurityError` 로 막힌다. 반드시 `serve_tool.py` 로 띄워라.
+- **갓 내려받은 상태에는 `data.js` 가 없다**(생성물이라 저장소에 없음). 도구는 빈 화면으로 뜬다.
+  사진을 넣고 5)까지 실행해야 슬라이드가 보인다.
+- `envcheck.py`·`launch.py`·`serve_tool.py` 는 **표준 라이브러리 전용**이라 venv 없이도 돈다.
+  반대로 `05_스크립트/` 의 이미지 처리 스크립트는 **반드시 venv 파이썬**으로 불러야 한다.
+- HEIC(아이폰) 사진을 쓰는데 `pillow-heif` 가 없으면 명시적으로 오류를 낸다.
+  `--yes` 셋업이 자동 설치하지만, 실패하면 `pip install pillow-heif` 를 따로 실행하라.
+- Windows 콘솔에서 한글이 깨지면 `chcp 65001` 후 재실행.
 
 ### 불변 계약
 
