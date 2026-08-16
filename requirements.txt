@@ -1,0 +1,19 @@
+# 슬라이드 보정 도구 — 파이썬 의존성
+#   pip install -r requirements.txt
+#
+# 브라우저 PDF 버튼은 jsPDF를 SRI 검증된 CDN에서 받으므로 인터넷이 필요합니다.
+# 오프라인 PDF 내보내기는 아래 Python 의존성만 사용합니다.
+# 아래는 사진 준비(prepare_photos.py)와 고해상도 PDF 내보내기(export_pdf.py)에 씁니다.
+
+opencv-python>=4.8        # 원근 보정(warp) · 무아레 제거(NLM)
+numpy>=1.24               # 색연산
+Pillow>=10.0              # 사진 읽기·축소 · PDF 조립
+
+# HEIC(아이폰 사진)를 쓸 때 — Windows·Linux 는 사실상 필수
+#   pip install pillow-heif
+# macOS 는 내장 sips 로도 동작하지만 pillow-heif 쪽이 훨씬 빠릅니다.
+# pillow-heif>=0.16
+
+# 선택 — 없어도 핵심 기능은 동작합니다
+#   poppler (pdfunite) : 통합 PDF 병합 --merge   → brew install poppler
+#   Node.js            : 색연산 일치 검증        → test_color_parity.py

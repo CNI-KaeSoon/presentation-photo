@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>슬라이드 스크린샷 보정 · PDF 내보내기</title>
+<script src="data.js"></script>
+<script src="heartbeat.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
+<style>
+:root{
+  --bg:#f7f9fc;--panel:#ffffff;--panel2:#f1f5f9;--ink:#172033;--mut:#64748b;
+  --acc:#2563eb;--acc2:#1e40af;--line:#d9e2ef;--warn:#b45309;--bad:#b91c1c;
+  --ok:#15803d;--shadow:0 1px 3px rgba(15,23,42,.08);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+#wrap{display:flex;min-height:100vh}
+#nav{width:300px;flex:0 0 300px;background:#fff;border-right:1px solid var(--line);position:sticky;top:0;height:100vh;overflow:auto;padding:0 0 18px;transition:width .2s,flex-basis .2s}
+body.navcol #nav{width:0;flex:0 0 0;overflow:hidden}
+#navToggle{position:fixed;top:50%;transform:translateY(-50%);left:300px;z-index:40;width:22px;height:56px;background:var(--acc2);color:#fff;border:0;border-radius:0 8px 8px 0;cursor:pointer;font-size:13px;box-shadow:1px 0 3px rgba(0,0,0,.15);transition:left .2s}
+body.navcol #navToggle{left:0}
+#nav h1{font-size:14px;padding:18px;color:#fff;margin:0;background:var(--acc2);font-weight:800;line-height:1.4}
+#nav .hint{font-size:11px;color:var(--mut);padding:10px 14px;border-bottom:1px solid var(--line)}
+#main{flex:1;padding:24px 32px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin:10px 0;box-shadow:var(--shadow)}
+.btn{background:#fff;color:var(--acc2);border:1px solid var(--acc);border-radius:6px;padding:6px 11px;font-size:12px;cursor:pointer;font-weight:700}
+.btn:hover{background:#eff6ff}
+.btn:disabled{opacity:.4;cursor:default;font-weight:600}
+.btn:disabled:hover{background:#fff}
+.btn.on{background:var(--acc2);color:#fff}
+.btn.warn{border-color:var(--bad);color:var(--bad)}
+.btn.warn.on{background:var(--bad);color:#fff}
+.btn.sm{padding:3px 8px;font-size:11px}
+.badge{display:inline-block;background:#eef4ff;color:var(--acc2);border:1px solid #c7d7fe;border-radius:20px;padding:2px 9px;font-size:11px;margin:2px 4px 2px 0}
+.badge.done{background:#ecfdf3;color:var(--ok);border-color:#bbf7d0}
+.badge.excluded{background:#fef2f2;color:var(--bad);border-color:#fecaca}
+.muted{color:var(--mut);font-size:13px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.folder{border-bottom:1px solid var(--line)}
+.folderHead{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:#f8fafc;padding:11px 14px;cursor:pointer;color:var(--ink);font-weight:800;text-align:left}
+.folderHead:hover{background:#eff6ff}
+.folderMeta{font-size:11px;color:var(--mut);font-weight:600;white-space:nowrap}
+.bulkActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line);background:#fffbeb}
+.folderBody{padding:5px 0 8px}
+.folder.collapsed .folderBody{display:none}
+#folderList,.slideItem{user-select:none;-webkit-user-select:none}
+.slideItem{display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;width:100%;border:0;background:#fff;padding:6px 12px 6px 16px;text-align:left;cursor:pointer;color:var(--ink);border-left:3px solid transparent}
+.slideItem:hover{background:#f8fafc}
+.slideItem.active{background:#eff6ff;border-left-color:var(--acc);font-weight:700}
+.slideItem.selected{background:#fff7d6;box-shadow:inset 3px 0 0 0 #d97706}
+.slideItem.active.selected{background:linear-gradient(90deg,#fff7d6 0,#fff7d6 42%,#eff6ff 42%,#eff6ff 100%)}
+.slideItem.excluded{opacity:.48;text-decoration:line-through}
+.slideItem.dragging{opacity:.4;outline:2px dashed var(--acc)}
+.slideItem[draggable=true]{cursor:grab}
+.folder.dragover{background:#eff6ff;box-shadow:inset 0 0 0 2px var(--acc)}
+.folder.dragover .folderHead{background:#dbeafe}
+.ctxMenu{position:fixed;z-index:50;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgba(15,23,42,.18);padding:4px;min-width:150px}
+.ctxMenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:7px 10px;font-size:12px;cursor:pointer;border-radius:4px;color:var(--ink);font-weight:600}
+.ctxMenu button:hover{background:#f1f5f9}
+.thumb{width:34px;height:22px;object-fit:cover;border:1px solid var(--line);border-radius:3px;background:#f1f5f9}
+.name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.state{font-size:10px;display:flex;gap:3px}
+.empty{max-width:760px;margin:80px auto;text-align:center}
+.editorGrid{display:grid;grid-template-columns:minmax(360px,1.2fr) minmax(320px,.8fr);gap:16px;align-items:start}
+@media(max-width:1080px){.editorGrid{grid-template-columns:1fr}#main{padding:18px}}
+.stagePanel{overflow:auto}
+.stage{position:relative;display:inline-block;max-width:100%;line-height:0;background:#0f172a}
+.stage.degenerate{outline:3px solid var(--bad);outline-offset:3px}
+.stage img{display:block;max-width:100%;height:auto;user-select:none}
+.quadLine{position:absolute;inset:0;pointer-events:none}
+.cornerHandle{position:absolute;width:15px;height:15px;margin-left:-7.5px;margin-top:-7.5px;background:#fff;border:2px solid var(--acc);border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.24);cursor:grab;z-index:5}
+.cornerHandle:active{cursor:grabbing}
+.cornerHandle.nw{cursor:nwse-resize}.cornerHandle.ne{cursor:nesw-resize}.cornerHandle.sw{cursor:nesw-resize}.cornerHandle.se{cursor:nwse-resize}
+.edgeHandle{position:absolute;width:14px;height:14px;margin-left:-7px;margin-top:-7px;background:rgba(37,99,235,.35);border:1px solid var(--acc);border-radius:50%;cursor:move;z-index:4}
+.edgeHandle:hover{background:rgba(37,99,235,.6)}
+.previewCanvas{width:100%;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:6px;display:block}
+.smallRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.progress{min-height:18px;font-size:12px;color:var(--mut)}
+kbd{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f5f9;border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+/* ---- 🎨 색보정 모드 ---- */
+.previewWrap{max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
+.previewWrap .previewCanvas{border:0;border-radius:0}
+.previewWrap.zoom100{max-height:70vh}
+.previewWrap.zoom100 .previewCanvas{width:auto;max-width:none}
+.colorPanel{display:none}
+body.colormode .colorPanel{display:block}
+/* 색보정 모드에서는 코너/변 핸들을 감춰 실수로 warp 이 바뀌지 않게 한다 */
+body.colormode .cornerHandle,body.colormode .edgeHandle{display:none}
+.sliderGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:9px 20px}
+.sliderRow{display:grid;grid-template-columns:96px 1fr 46px 24px;gap:8px;align-items:center}
+.sliderRow>label{font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap;display:flex;align-items:center;gap:4px}
+.sliderRow input[type=range]{width:100%;margin:0;accent-color:var(--acc)}
+.sliderRow .val{font:12px ui-monospace,Menlo,monospace;text-align:right;color:var(--mut)}
+.sliderRow .rst{border:1px solid var(--line);background:#fff;color:var(--mut);border-radius:4px;cursor:pointer;font-size:12px;line-height:1;padding:2px 4px}
+.sliderRow .rst:hover{background:#eff6ff;color:var(--acc2);border-color:var(--acc)}
+.sliderRow.py>label{color:var(--warn)}
+.pybadge{display:inline-block;background:#fff7ed;color:var(--warn);border:1px solid #fed7aa;border-radius:10px;padding:0 6px;font-size:9px;font-weight:700}
+.colorActions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+body.colormode #beforeAfterBtn.on{background:var(--warn);color:#fff;border-color:var(--warn)}
+/* 색보정 모드에선 원본(코너) 패널을 감추고, 미리보기(좌) | 색보정 패널(우) 2열로 둔다.
+   코너 모드 복귀 시 body.colormode 제거만으로 자동 원복. minmax(0,1fr) — 기본 1fr 은
+   minmax(auto,1fr) 이라 캔버스 콘텐츠 min-width 에 막힌다. 원본 비교는 b키/원본비교 버튼.
+   우측 폭 315px = 슬라이더 행 285px + .panel padding 14*2 + border 1*2.
+   285px 는 변경 전 행 폭(1440:335 / 1920:367)의 4/5(268/294) 를 양쪽 ±10% 안에서
+   만족하는 단일값이다. 세로는 calc 로 잘라 페이지 전체가 아닌 패널만 스크롤시킨다. */
+body.colormode .stagePanel{display:none}
+body.colormode .editorGrid{grid-template-columns:minmax(0,1fr) 315px}
+body.colormode .sliderGrid{grid-template-columns:minmax(0,1fr)}
+body.colormode .colorPanel{max-height:calc(100vh - 250px);overflow-y:auto}
+body.colormode .previewWrap{max-height:calc(100vh - 350px)}
+body.colormode .previewWrap.zoom100{max-height:calc(100vh - 350px)}
+/* 좁은 화면에선 2열을 포기하고 세로로 쌓는다(기존 media query 와 동일 취지). */
+@media(max-width:1080px){
+  body.colormode .editorGrid{grid-template-columns:minmax(0,1fr)}
+  body.colormode .colorPanel{max-height:none;overflow-y:visible}
+}
+/* 💧 스포이드 */
+body.eyedropping #preview{cursor:crosshair}
+#eyedropBtn.on{background:var(--acc2);color:#fff}
+/* 📊 레벨 그래프 */
+.levelBox{margin:12px 0 0;padding:10px 0 0;border-top:1px solid var(--line)}
+.levelGraph{width:100%;max-width:420px;height:auto;display:block;margin-top:6px;background:#fff;border:1px solid var(--line);border-radius:6px;cursor:ew-resize;touch-action:none}
+/* ---- ⚡ 자동 보정 4종 + 화자 일괄 — 미리보기 패널 제목 옆 빈 공간 ----
+   색보정 모드에서만 나타난다(코너 모드에선 무의미). topbar 가 flex-wrap 이라 폭이 모자라면
+   줄바꿈으로 물러나고, 좁을 땐 ↑/↓ 힌트를 감춰 자리를 내준다. */
+.autoBar{display:none;gap:6px;align-items:center;flex-wrap:wrap}
+body.colormode .autoBar{display:flex}
+body.colormode .previewHint{display:none}
+.autoBar .autoSep{width:1px;height:18px;background:var(--line);margin:0 3px}
+.autoBar .autoLbl{font-size:11px;color:var(--mut);font-weight:700}
+#autoLevelsBtn.on{background:var(--acc2);color:#fff}
+#autoLevelsRstBtn{display:none}
+#autoLevelsRstBtn.show{display:inline-block}
+#applySpeakerBtn{border-color:var(--warn);color:var(--warn)}
+#applySpeakerBtn:hover{background:#fff7ed}
+/* ---- 💾 저장 상태 / 백업 ---- */
+.saveBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 9px;padding:6px 8px;
+  border:1px solid var(--line);border-radius:6px;background:var(--panel2);font-size:11px}
+.saveBar .saveState{color:var(--ok);font-weight:700;white-space:nowrap}
+.saveBar .backupAge{color:var(--mut);white-space:nowrap}
+.saveBar.stale{background:#fff7ed;border-color:#fed7aa}
+.saveBar.stale .backupAge{color:var(--warn);font-weight:700}
+.saveBar.stale #backupNowBtn{background:var(--warn);color:#fff;border-color:var(--warn)}
+.saveBar.fail{background:#fef2f2;border-color:#fecaca}
+.saveBar.fail .saveState{color:var(--bad)}
+/* localStorage 저장 실패 = 224장 작업이 날아갈 수 있는 재앙 → 조용히 실패시키지 않는다 */
+#storeFail{display:none;position:fixed;left:0;right:0;top:0;z-index:100;background:var(--bad);color:#fff;
+  padding:12px 16px;font-size:13px;font-weight:700;line-height:1.5;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+#storeFail.show{display:block}
+#storeFail button{margin-left:10px;background:#fff;color:var(--bad);border:0;border-radius:5px;
+  padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}
+/* ---- 인라인 확인 대화 (confirm() 금지 — 로컬 HTML 도구 규칙) ---- */
+#modalBack{display:none;position:fixed;inset:0;z-index:90;background:rgba(15,23,42,.45)}
+#modalBack.show{display:flex;align-items:center;justify-content:center}
+.modalBox{background:#fff;border-radius:10px;padding:18px 20px;max-width:430px;margin:16px;box-shadow:0 8px 30px rgba(0,0,0,.32)}
+.modalBox h4{margin:0 0 8px;font-size:15px}
+.modalBox .msg{font-size:13px;margin:0 0 14px;line-height:1.6}
+.modalActions{display:flex;gap:8px;justify-content:flex-end}
+</style>
+</head>
+<body>
+<div id="storeFail"><span id="storeFailMsg"></span><button onclick="backupNow()">지금 백업 내보내기</button><button onclick="document.getElementById('storeFail').classList.remove('show')">닫기</button></div>
+<div id="modalBack" onclick="if(event.target===this)closeModal()">
+  <div class="modalBox" role="dialog" aria-modal="true">
+    <h4 id="modalTitle"></h4>
+    <p class="msg" id="modalMsg"></p>
+    <div class="modalActions">
+      <button class="btn sm" onclick="closeModal()">취소</button>
+      <button id="modalOkBtn" class="btn sm warn on">적용</button>
+    </div>
+  </div>
+</div>
+<div id="wrap">
+  <button id="navToggle" onclick="toggleNav()" title="목록 접기/펴기">◀</button>
+  <nav id="nav">
+    <h1>슬라이드 스크린샷 보정<br>PDF 내보내기</h1>
+    <div class="hint">폴더별 이미지를 검수하고 네 모서리를 드래그해 원근을 보정합니다.</div>
+    <label class="hint" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="showExcludedChk" checked onchange="toggleShowExcluded(this.checked)">
+      제외 항목 표시
+    </label>
+    <div id="folderList"></div>
+  </nav>
+  <main id="main">
+    <div id="empty" class="empty panel">
+      <h2>이미지 목록이 없습니다</h2>
+      <p class="muted">`../*/img/*.png`를 추가한 뒤 `python3 gen_manifest.py`를 실행하고 새로고침하세요.</p>
+    </div>
+    <section id="editor" style="display:none">
+      <div class="topbar">
+        <div>
+          <h2 id="title" style="margin:0;font-size:22px">-</h2>
+          <div id="subTitle" class="muted"></div>
+        </div>
+        <div class="actions">
+          <button class="btn sm" onclick="moveSlide(-1)">이전</button>
+          <button class="btn sm" onclick="moveSlide(1)">다음</button>
+          <button class="btn sm" onclick="resetCorners()">리셋</button>
+          <button id="doneBtn" class="btn sm" onclick="toggleStatus('done')">완료 표시</button>
+          <button id="excludeBtn" class="btn sm warn" onclick="toggleStatus('excluded')">제외</button>
+          <button id="colorModeBtn" class="btn sm" onclick="toggleColorMode()" title="PhotoScape식 수동 색보정 모드 (슬라이더·실시간 미리보기)">🎨 색보정</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="topbar" style="margin:0">
+          <div class="smallRow">
+            <b>출력 비율</b>
+            <button class="btn sm ratioBtn" data-ratio="16:9">16:9</button>
+            <button class="btn sm ratioBtn" data-ratio="4:3">4:3</button>
+            <button class="btn sm ratioBtn" data-ratio="free">자유</button>
+            <span id="statusBadges"></span>
+          </div>
+          <div class="actions">
+            <button id="exportBtn" class="btn" onclick="exportCurrentFolder('all')">PDF 내보내기</button>
+            <button id="exportDoneBtn" class="btn" onclick="exportCurrentFolder('done')" title="완료 표시한 슬라이드만 원근보정 적용해 한 PDF로 저장하고 위치(코너) 백업 JSON도 함께 저장">완료본 PDF+위치백업</button>
+            <button id="cancelExportBtn" class="btn sm warn" onclick="cancelExport()" style="display:none" disabled>취소</button>
+            <button id="backupExportBtn" class="btn sm" onclick="exportBackup()" title="모든 폴더의 보정·완료·제외·비율 상태를 JSON 파일로 저장">백업 내보내기</button>
+            <button id="backupImportBtn" class="btn sm" onclick="document.getElementById('backupFile').click()" title="백업 JSON을 불러와 복원">백업 불러오기</button>
+            <input id="backupFile" type="file" accept="application/json,.json" style="display:none" onchange="importBackup(this.files)">
+            <span id="progress" class="progress"></span>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:8px">"PDF 내보내기" = "제외" 뺀 전체 · "완료본 PDF+위치백업" = "완료" 표시한 슬라이드만 한 PDF로 저장 + 위치(코너)·상태 백업 JSON 동시 저장</div>
+      </div>
+      <div class="editorGrid">
+        <div class="panel stagePanel">
+          <div class="topbar">
+            <h3 style="margin:0">원본 모서리 지정</h3>
+            <span class="muted">코너·변 핸들 모두 드래그 가능</span>
+          </div>
+          <div class="smallRow" style="margin:8px 0">
+            <button id="copyCornersBtn" class="btn sm" onclick="copyCorners()">경계 복사</button>
+            <button id="pasteCornersBtn" class="btn sm" onclick="pasteCorners()" disabled>경계 붙여넣기</button>
+            <span id="cornerClipboardStatus" class="muted"></span>
+          </div>
+          <div id="stage" class="stage">
+            <img id="sourceImg" alt="">
+            <canvas id="quadCanvas" class="quadLine"></canvas>
+            <div class="edgeHandle" data-a="0" data-b="1" title="nw-ne"></div>
+            <div class="edgeHandle" data-a="1" data-b="3" title="ne-se"></div>
+            <div class="edgeHandle" data-a="3" data-b="2" title="se-sw"></div>
+            <div class="edgeHandle" data-a="2" data-b="0" title="sw-nw"></div>
+            <div class="cornerHandle nw" data-idx="0" title="nw"></div>
+            <div class="cornerHandle ne" data-idx="1" title="ne"></div>
+            <div class="cornerHandle sw" data-idx="2" title="sw"></div>
+            <div class="cornerHandle se" data-idx="3" title="se"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="topbar">
+            <h3 style="margin:0">보정 미리보기</h3>
+            <!-- ⚡ 자동 보정 4종 + 화자 일괄 — 색보정 모드에서만 표시(.autoBar). '자동 콘트라스트'는
+                 레벨 그래프 헤더에 있던 기존 버튼을 이리로 옮긴 것(중복 생성 아님). -->
+            <div class="autoBar">
+              <span class="autoLbl">⚡ 자동</span>
+              <button id="autoLevelsBtn" class="btn sm" onclick="autoLevels()" title="자동 레벨 — R·G·B 채널을 각각 독립으로 0.1%~99.9% 구간까지 늘립니다.&#10;→ 색캐스트(누런끼·푸른끼)가 제거됩니다. 포토샵 '자동 레벨'과 동일 개념.&#10;※ 색을 바꾸고 싶지 않으면 '자동 콘트라스트'를 쓰세요.">자동 레벨</button>
+              <button id="autoLevelsRstBtn" class="btn sm" onclick="autoLevelsReset()" title="자동 레벨만 해제(다른 보정값은 유지)">↺</button>
+              <button class="btn sm" onclick="autoContrast()" title="자동 콘트라스트 — RGB를 공통 비율로 0.5%~99.5% 구간까지 늘립니다.&#10;→ 명암만 살아나고 색은 그대로 유지됩니다.&#10;※ 채널별 독립인 '자동 레벨'과 달리 색캐스트는 남습니다.">자동 콘트라스트</button>
+              <button class="btn sm" onclick="autoWhiteBalance()" title="자동 화이트밸런스 — 이미지 전체 평균색을 중성 회색으로 맞춥니다(gray-world).&#10;→ 화면 전체의 색틀어짐을 한 번에 중화. 색온도+색조를 함께 조정합니다.&#10;※ 특정 지점 기준으로 맞추려면 '💧 스포이드'를 쓰세요.">자동 화이트밸런스</button>
+              <button class="btn sm" onclick="autoTint()" title="자동 색조 — 녹색↔마젠타 축만 자동으로 맞춥니다(색조만 변경, 색온도는 그대로).&#10;→ 형광등 특유의 녹색끼를 뺄 때.">자동 색조</button>
+              <span class="autoSep"></span>
+              <button id="applySpeakerBtn" class="btn sm" onclick="confirmApplySpeaker()" title="현재 슬라이더값을 이 화자(폴더) 전체 슬라이드에 복사합니다. 확인 후 적용됩니다.">📋 이 화자 전체</button>
+              <!-- ↩︎ 되돌리기 — 이 슬라이드의 색보정 동작 최대 100스텝. 툴팁·활성상태는 renderUndoUI() 가 갱신한다.
+                   라벨은 고정폭이다: 남은 스텝수를 넣으면 (1) ↺(자동레벨 해제) 가 뜬 상태에서 autoBar 가
+                   가용폭(601px)을 넘겨 제목줄이 2행으로 접히고 미리보기가 38px 줄어들며,
+                   (2) 스텝수 자릿수에 따라 버튼 폭이 70→99px 로 흔들려 옆 버튼이 밀린다.
+                   → 남은 스텝수는 툴팁과 하단 메시지(#colorMsg)에서 보여준다. -->
+              <button id="undoBtn" class="btn sm" onclick="doUndo()" disabled title="되돌릴 동작이 없습니다&#10;Ctrl+Z / ⌘Z">↩︎ 되돌리기</button>
+            </div>
+            <span class="muted previewHint"><kbd>↑</kbd>/<kbd>↓</kbd> 이동</span>
+          </div>
+          <div id="previewWrap" class="previewWrap"><canvas id="preview" class="previewCanvas"></canvas></div>
+          <p class="muted">PDF 내보내기는 제외 항목을 건너뛰고, 출력 비율에 맞춰 미리보기와 같은 보정을 적용합니다.</p>
+        </div>
+      <!-- colorPanel 은 editorGrid 의 3번째 항목이다. 코너 모드에선 display:none 이라
+           그리드 항목이 되지 않아 기존 2열(원본|미리보기) 레이아웃이 그대로 유지되고,
+           색보정 모드에선 stagePanel 이 빠져 미리보기|색보정 2열이 된다. -->
+      <section id="colorPanel" class="panel colorPanel">
+        <div class="topbar" style="margin:0 0 8px">
+          <h3 style="margin:0">🎨 수동 색보정 <span id="colorCluster" class="muted" style="font-weight:400"></span></h3>
+          <div class="smallRow">
+            <button id="eyedropBtn" class="btn sm" onclick="toggleEyedropper()" title="회색이어야 할 곳을 미리보기에서 클릭하면 색온도·색조를 자동 계산합니다 (5×5 평균 · 1회용 · Esc 취소).&#10;⚠️ 클릭 당시의 밝기/대비 기준 절대값을 넣습니다 — 이후 밝기·대비를 바꾸면 다시 클릭하세요(포토샵과 동일).">💧 스포이드</button>
+            <button id="beforeAfterBtn" class="btn sm" onclick="toggleBeforeAfter()" title="원본(보정 전) ↔ 보정 후 비교">원본 비교</button>
+            <button id="zoomBtn" class="btn sm" onclick="toggleZoom()" title="미리보기를 원본 해상도(100%)로 확대">100% 확대</button>
+          </div>
+        </div>
+        <!-- 💾 저장 상태 — "그냥 맞춰놓기만 하면 저장되나?" 에 대한 답을 항상 눈에 보이게.
+             자동 저장은 브라우저 localStorage 라 캐시 삭제 시 전부 날아간다 → 백업을 여기서 유도. -->
+        <div id="saveBar" class="saveBar">
+          <span id="saveState" class="saveState">💾 자동 저장됨</span>
+          <span id="backupAge" class="backupAge">· 백업 확인 중…</span>
+          <button id="backupNowBtn" class="btn sm" onclick="backupNow()" title="지금까지의 모든 색보정·코너·완료·제외 상태를 JSON 파일로 내려받습니다.&#10;⚠️ 자동 저장은 이 브라우저 안에만 있습니다 — 캐시를 지우면 사라지므로 주기적으로 백업하세요.">⬇ 백업 내보내기</button>
+        </div>
+        <div id="sliderGrid" class="sliderGrid"></div>
+        <div class="levelBox">
+          <div class="topbar" style="margin:0">
+            <b style="font-size:12px">📊 레벨 그래프 <span class="muted" style="font-weight:400">— 검정/중간/흰 핸들 드래그 = 블랙포인트 · 감마 · 화이트포인트</span></b>
+            <!-- '자동 콘트라스트' 버튼은 미리보기 패널 헤더(⚡ 자동)로 이동했다. -->
+          </div>
+          <canvas id="levelGraph" class="levelGraph" width="256" height="120"></canvas>
+          <p class="muted" id="levelNote" style="margin:6px 0 0;font-size:11px">
+            그래프는 <b>레벨 단계 직전</b>(밝기·대비·색온도·채도·감마까지 반영)의 luma 분포입니다. 세로축은 √스케일(배경 스파이크 대비).
+            핸들은 기존 <b>블랙포인트·감마·화이트포인트</b> 슬라이더의 다른 표현이라 값이 서로 연동되며, 슬라이더 눈금(step)에 맞춰 스냅됩니다.
+            ⚠️ 이 파이프라인은 <b>감마(5단계)가 레벨(6단계)보다 앞</b>이라, 중간 핸들을 끌면 히스토그램 자체가 함께 움직입니다(포토샵은 정지).
+            순서를 바꾸면 최종 PDF 파리티가 깨지고 기존 보정본이 훼손되므로 <b>의도된 동작</b>입니다.
+          </p>
+        </div>
+        <div class="colorActions">
+          <button class="btn sm" onclick="resetColor()" title="이 슬라이드 색보정을 기본값(원본)으로 — 단축키 R (Ctrl+Z 로 되돌릴 수 있음)">원본 리셋 (R)</button>
+          <button id="clusterPresetBtn" class="btn sm" onclick="loadClusterPreset()" title="이 슬라이드 군집의 자동 색보정 값을 슬라이더로 불러오기">자동값(군집) 불러오기</button>
+          <span style="width:12px;display:inline-block"></span>
+          <!-- '이 화자 전체' 는 미리보기 패널 헤더(⚡ 자동 옆)로 이동 — 확인 대화 포함. -->
+          <button class="btn sm" onclick="applyColorTo('cluster')" title="현재 슬라이더값을 같은 군집 전체에 복사">같은 군집 전체</button>
+          <button class="btn sm" onclick="applyColorTo('all')" title="현재 슬라이더값을 모든 슬라이드에 복사">전체</button>
+          <span id="colorMsg" class="muted"></span>
+        </div>
+        <p class="muted" style="margin:8px 0 0">미리보기 화면이 최종 PDF(파이썬 렌더)와 <b>동일한 색연산·순서</b>를 씁니다. 무아레제거·다크영역통일은 미리보기에선 약식 근사이며 최종 PDF에서 정밀 적용됩니다.</p>
+      </section>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const RAW_DATA=window.SLIDE_DATA||{};
+const folderNames=Object.keys(RAW_DATA);
+const LS_MOVES='slideMoves_v1';           // {file: targetFolder} — 화자 이동 오버라이드
+const moveStore=readStore(LS_MOVES,{});
+function _natkey(v){return String(v).split(/(\d+)/).map(x=>/^\d+$/.test(x)?+x:x.toLowerCase());}
+function _natcmp(a,b){const A=_natkey(a),B=_natkey(b);for(let i=0;i<Math.max(A.length,B.length);i++){if(A[i]===undefined)return -1;if(B[i]===undefined)return 1;if(A[i]<B[i])return -1;if(A[i]>B[i])return 1;}return 0;}
+function buildData(){
+  const d={};folderNames.forEach(f=>d[f]=[]);
+  for(const f of folderNames){for(const s of (RAW_DATA[f]||[])){
+    const tgt=(moveStore[s.file]&&folderNames.includes(moveStore[s.file]))?moveStore[s.file]:f;
+    d[tgt].push(s);
+  }}
+  for(const f of folderNames)d[f].sort((a,b)=>_natcmp(a.name,b.name));   // keep chronological
+  return d;
+}
+function saveMoves(){writeStore(LS_MOVES,moveStore);}
+let DATA=buildData();
+const DEFAULT_CORNERS=[[0,0],[1,0],[0,1],[1,1]];
+const LS_CORNERS='slideCorners_v1';
+const LS_STATUS='slideStatus_v1';
+const LS_RATIOS='slideRatios_v1';
+const LS_COLOR='slideColor_v1';           // {file: {brightness,contrast,...}} — PhotoScape식 수동 색보정
+const LS_SHOW_EXCLUDED='slideShowExcluded_v1';
+// 백업 유도용 로컬 메타. ⚠️ BACKUP_KEYS 에 넣지 않는다 — 백업 JSON 스키마를 기존 6키 그대로 유지해야
+// color_render.py(load_backup)와 구 백업 파일 호환이 깨지지 않는다.
+const LS_BACKUP_META='slideBackupMeta_v1'; // {at:<epoch ms>}
+const LS_DIRTY='slideColorDirty_v1';       // [file,...] — 마지막 백업 이후 색보정한 슬라이드
+function migrateStoreKey(oldKey,newKey){
+  const oldValue=localStorage.getItem(oldKey);
+  if(localStorage.getItem(newKey)===null && oldValue!==null)localStorage.setItem(newKey,oldValue);
+}
+migrateStoreKey('slideCorners',LS_CORNERS);
+migrateStoreKey('slideStatus',LS_STATUS);
+migrateStoreKey('slideRatios',LS_RATIOS);
+const cornersStore=readStore(LS_CORNERS,{});
+const statusStore=readStore(LS_STATUS,{});
+// Ratio is persisted per image because mixed video sources can contain different slide formats.
+const ratioStore=readStore(LS_RATIOS,{});
+const colorStore=readStore(LS_COLOR,{});   // 수동 색보정값 (이미지키 → 파라미터)
+let clusterByFile={};                       // 이미지키 → 군집(dark/white/mixed) (classification.json)
+let clusterParams=null;                      // 군집별 자동 색보정 파라미터 (자동값 불러오기용)
+let colorMode=false;                         // 🎨 색보정 모드 on/off
+let colorShowOriginal=false;                 // 원본 비교(보정 전) 표시
+let showExcluded=readStore(LS_SHOW_EXCLUDED,true);
+let curFolder=folderNames[0]||null;
+let curIndex=0;
+let selectedIdx=new Set();
+let cornerClipboard=null;
+let lastClickedIdx=null;
+let ctxMenuClickHandler=null;
+let ctxMenuKeyHandler=null;
+let ctxMenuScrollHandler=null;
+let sourcePixels=null;
+let sourceCanvas=document.createElement('canvas');
+let sourceCtx=sourceCanvas.getContext('2d',{willReadFrequently:true});
+let renderQueued=false;
+let exporting=false;
+let exportCancelled=false;
+
+function readStore(key,fallback){try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback));}catch{return fallback;}}
+// ⚠️ localStorage 는 용량 한계(보통 5~10MB)가 있고, 초과 시 setItem 이 throw 한다.
+// 조용히 실패하면 사용자는 저장된 줄 알고 224장 작업을 통째로 잃는다 → 실패는 반드시 크게 알린다.
+function writeStore(key,value){
+  try{localStorage.setItem(key,JSON.stringify(value));return true;}
+  catch(e){
+    const quota=e&&(e.name==='QuotaExceededError'||e.name==='NS_ERROR_DOM_QUOTA_REACHED'||e.code===22||e.code===1014);
+    console.error('localStorage 저장 실패:',key,e);
+    showStoreFail(quota
+      ? '⚠️ 저장 공간이 가득 차 색보정이 저장되지 않았습니다! 지금 백업을 내보내세요 — 새로고침하면 최근 작업이 사라집니다.'
+      : '⚠️ 저장에 실패했습니다('+((e&&e.name)||e)+'). 사생활 보호 모드일 수 있습니다. 지금 백업을 내보내세요.');
+    return false;
+  }
+}
+function showStoreFail(msg){
+  const bar=document.getElementById('storeFail');if(!bar)return;
+  const m=document.getElementById('storeFailMsg');if(m)m.textContent=msg;
+  bar.classList.add('show');
+  const sb=document.getElementById('saveBar'),ss=document.getElementById('saveState');
+  if(sb)sb.classList.add('fail');
+  if(ss)ss.textContent='💥 저장 실패';
+}
+// slideColor_v1(수동 색보정)도 백업에 포함 — 코너/상태/비율/이동과 함께 라운드트립.
+const BACKUP_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES];
+function collectBackup(){
+  const bak={_type:'slide_tool_backup',_version:1,_savedAt:new Date().toISOString(),data:{}};
+  BACKUP_KEYS.forEach(k=>{const v=localStorage.getItem(k);if(v!=null)bak.data[k]=v;});
+  return bak;
+}
+function applyBackup(parsed){
+  const d=(parsed&&parsed.data)?parsed.data:parsed;
+  let n=0;
+  BACKUP_KEYS.forEach(k=>{if(d[k]!=null){localStorage.setItem(k,d[k]);n++;}});
+  return n;
+}
+function exportBackup(){
+  const blob=new Blob([JSON.stringify(collectBackup(),null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  const stamp=new Date().toISOString().replace(/[:T]/g,'-').replace(/\..+/,'').slice(0,19);
+  a.href=URL.createObjectURL(blob);a.download='slide_tool_backup_'+stamp+'.json';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  markBackedUp();
+}
+// ---- 💾 저장/백업 상태 (사용자 질문: "맞춰놓기만 하면 저장되나?" → 자동 저장은 되지만 브라우저 안에만) ----
+const colorDirty=new Set(readStore(LS_DIRTY,[]));
+const BACKUP_WARN_SLIDES=15;              // 이만큼 보정했는데 백업이 없으면 경고
+const BACKUP_WARN_MS=20*60*1000;          // 마지막 백업 후 이 시간이 지나면 경고(보정이 쌓인 경우)
+function backupMeta(){return readStore(LS_BACKUP_META,{});}
+function markColorDirty(file){
+  if(colorDirty.has(file))return;
+  colorDirty.add(file);writeStore(LS_DIRTY,Array.from(colorDirty));updateSaveBar();
+}
+function markBackedUp(){
+  colorDirty.clear();
+  writeStore(LS_DIRTY,[]);writeStore(LS_BACKUP_META,{at:Date.now()});
+  updateSaveBar();
+}
+function backupNow(){
+  exportBackup();
+  setColorMsg('백업 파일을 내려받았습니다 (다운로드 폴더 확인)');
+  const bar=document.getElementById('storeFail');if(bar)bar.classList.remove('show');
+}
+function fmtAge(ms){
+  const m=Math.floor(ms/60000);
+  if(m<1)return '방금';
+  if(m<60)return m+'분 전';
+  const h=Math.floor(m/60);
+  if(h<24)return h+'시간 전';
+  return Math.floor(h/24)+'일 전';
+}
+function updateSaveBar(){
+  const bar=document.getElementById('saveBar');if(!bar)return;
+  if(bar.classList.contains('fail'))return;      // 저장 실패 표시가 우선 — 덮어쓰지 않는다
+  const meta=backupMeta(),pend=colorDirty.size;
+  const age=meta.at?(Date.now()-meta.at):null;
+  const ss=document.getElementById('saveState');
+  if(ss)ss.textContent=pend?('💾 자동 저장됨 · 미백업 '+pend+'장'):'💾 자동 저장됨';
+  const el=document.getElementById('backupAge');
+  if(el)el.textContent=meta.at?('· 마지막 백업: '+fmtAge(age)):'· 백업한 적 없음';
+  // 경고: 백업이 없는데 보정이 쌓였거나, 백업 후 시간이 많이 지났는데 미백업분이 있을 때
+  const stale=pend>0&&(!meta.at||pend>=BACKUP_WARN_SLIDES||age>BACKUP_WARN_MS);
+  bar.classList.toggle('stale',!!stale);
+}
+function importBackup(files){
+  const f=files&&files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const n=applyBackup(JSON.parse(rd.result));
+      markBackedUp();   // 복원 직후 = 디스크의 백업 파일과 현재 상태가 일치 → 미백업분 0
+      alert('백업 복원 완료('+n+'개 항목). 새로고침합니다.');
+      location.reload();
+    }catch(e){alert('백업 파일을 읽을 수 없습니다: '+e.message);}
+  };
+  rd.readAsText(f);
+}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function cloneCorners(c){return c.map(p=>[+p[0],+p[1]]);}
+function currentSlide(){return curFolder?DATA[curFolder][curIndex]:null;}
+function getCorners(file){return cloneCorners(cornersStore[file]||DEFAULT_CORNERS);}
+function setCorners(file,corners){cornersStore[file]=corners.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]);writeStore(LS_CORNERS,cornersStore);}
+function statusFor(file){return statusStore[file]||{};}
+function ratioFor(file){return ratioStore[file]||'16:9';}
+
+function copyCorners(){
+  const slide=currentSlide();if(!slide)return;
+  cornerClipboard={corners:getCorners(slide.file),ratio:ratioFor(slide.file)};
+  updateClipboardUi();
+}
+
+function pasteCorners(){
+  if(!cornerClipboard)return;
+  const slide=currentSlide();if(!slide)return;
+  setCorners(slide.file,cloneCorners(cornerClipboard.corners));
+  ratioStore[slide.file]=cornerClipboard.ratio;
+  writeStore(LS_RATIOS,ratioStore);
+  updateRatioButtons();
+  positionHandles();
+  scheduleRender();
+  updateClipboardUi();
+}
+
+function updateClipboardUi(){
+  document.getElementById('pasteCornersBtn').disabled=!cornerClipboard;
+  document.getElementById('cornerClipboardStatus').textContent=cornerClipboard?'복사됨 · 붙여넣기 가능':'';
+}
+
+function toggleNav(){const c=document.body.classList.toggle('navcol');document.getElementById('navToggle').textContent=c?'▶':'◀';}
+function toggleShowExcluded(value){showExcluded=value;writeStore(LS_SHOW_EXCLUDED,showExcluded);renderNav();}
+
+function origFolderOf(file){for(const f of folderNames){if((RAW_DATA[f]||[]).some(s=>s.file===file))return f;}return null;}
+function moveSlideToFolder(file,targetFolder){
+  if(!folderNames.includes(targetFolder))return;
+  const cur=(moveStore[file]&&folderNames.includes(moveStore[file]))?moveStore[file]:origFolderOf(file);
+  if(cur===targetFolder)return;
+  if(targetFolder===origFolderOf(file))delete moveStore[file];else moveStore[file]=targetFolder;
+  saveMoves();
+  DATA=buildData();
+  if(!(DATA[curFolder]||[]).length)curFolder=folderNames.find(f=>DATA[f].length)||curFolder;
+  curIndex=Math.max(0,Math.min(curIndex,(DATA[curFolder]||[]).length-1));
+  renderNav();loadSlide();
+}
+function moveSlideRel(folder,index,delta){
+  const s=(DATA[folder]||[])[index];if(!s)return;
+  const tgt=folderNames[folderNames.indexOf(folder)+delta];
+  if(!tgt){alert(delta<0?'이전 화자가 없습니다.':'다음 화자가 없습니다.');return;}
+  // 이동할 슬라이드를 현재 선택으로 잡아 이동 후 추적
+  moveSlideToFolder(s.file,tgt);
+}
+function folderCounts(folder){
+  const slides=DATA[folder]||[];
+  let done=0,excluded=0;
+  slides.forEach(s=>{const st=statusFor(s.file);if(st.done)done++;if(st.excluded)excluded++;});
+  return {total:slides.length,done,excluded};
+}
+
+function renderNav(){
+  const root=document.getElementById('folderList');
+  if(!folderNames.length){root.innerHTML='';return;}
+  root.innerHTML=folderNames.map(folder=>{
+    const c=folderCounts(folder);
+    const slides=DATA[folder]||[];
+    return `<div class="folder ${folder===curFolder?'':'collapsed'}" data-folder="${esc(folder)}">
+      <button class="folderHead" data-folder="${esc(folder)}">
+        <span>${esc(folder)}</span>
+        <span class="folderMeta">${c.done} / ${c.total} 완료 · ${c.excluded} 제외</span>
+      </button>
+      ${folder===curFolder&&selectedIdx.size?`<div class="bulkActions">
+        <button class="btn sm warn bulkActionBtn" data-folder="${esc(folder)}" data-action="exclude">선택 ${selectedIdx.size}개 제외</button>
+        <button class="btn sm bulkActionBtn" data-folder="${esc(folder)}" data-action="unexclude">선택 ${selectedIdx.size}개 제외 해제</button>
+      </div>`:''}
+      <div class="folderBody">
+        ${slides.map((s,i)=>{
+          const st=statusFor(s.file);
+          if(!showExcluded && st.excluded)return '';
+          const cls=[
+            folder===curFolder&&i===curIndex?'active':'',
+            folder===curFolder&&selectedIdx.has(i)?'selected':'',
+            st.excluded?'excluded':''
+          ].join(' ');
+          const state=`${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':''}`;
+          return `<button class="slideItem ${cls}" draggable="true" data-folder="${esc(folder)}" data-index="${i}" data-file="${esc(s.file)}">
+            <img class="thumb" src="${esc(s.file)}" alt="">
+            <span class="name">${esc(s.name)}</span>
+            <span class="state">${state}</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  root.querySelectorAll('.folderHead').forEach(btn=>btn.onclick=()=>{
+    const folder=btn.dataset.folder;
+    const box=btn.closest('.folder');
+    if(folder!==curFolder && DATA[folder] && DATA[folder].length){selectSlide(folder,0);return;}
+    box.classList.toggle('collapsed');
+  });
+  root.querySelectorAll('.bulkActionBtn').forEach(btn=>btn.onclick=()=>{
+    bulkSetExcluded(btn.dataset.folder,Array.from(selectedIdx),btn.dataset.action==='exclude');
+  });
+  root.querySelectorAll('.slideItem').forEach(btn=>btn.onclick=e=>{
+    const folder=btn.dataset.folder;
+    const index=+btn.dataset.index;
+    if(e.shiftKey){
+      e.preventDefault();
+      if(lastClickedIdx===null){
+        selectedIdx=new Set([index]);
+        lastClickedIdx=index;
+      }else{
+        const start=Math.min(lastClickedIdx,index),end=Math.max(lastClickedIdx,index);
+        selectedIdx=new Set();
+        for(let i=start;i<=end;i++){
+          if(!showExcluded && statusFor(DATA[folder][i].file).excluded)continue;
+          selectedIdx.add(i);
+        }
+      }
+      renderNav();
+      return;
+    }
+    if(e.metaKey||e.ctrlKey){
+      if(selectedIdx.has(index))selectedIdx.delete(index);
+      else selectedIdx.add(index);
+      lastClickedIdx=index;
+      renderNav();
+      return;
+    }
+    selectedIdx.clear();
+    lastClickedIdx=index;
+    selectSlide(folder,index);
+  });
+  root.querySelectorAll('.slideItem').forEach(btn=>btn.addEventListener('contextmenu',e=>{
+    e.preventDefault();
+    openCtxMenu(e.clientX,e.clientY,btn.dataset.folder,+btn.dataset.index);
+  }));
+  // 드래그로 앞뒤 화자 폴더에 옮기기
+  root.querySelectorAll('.slideItem').forEach(btn=>{
+    btn.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',btn.dataset.file);e.dataTransfer.effectAllowed='move';btn.classList.add('dragging');});
+    btn.addEventListener('dragend',()=>btn.classList.remove('dragging'));
+  });
+  root.querySelectorAll('.folder').forEach(box=>{
+    box.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';box.classList.add('dragover');});
+    box.addEventListener('dragleave',()=>box.classList.remove('dragover'));
+    box.addEventListener('drop',e=>{e.preventDefault();box.classList.remove('dragover');const file=e.dataTransfer.getData('text/plain');if(file&&box.dataset.folder)moveSlideToFolder(file,box.dataset.folder);});
+  });
+}
+
+function selectSlide(folder,index){
+  if(folder!==curFolder){selectedIdx.clear();lastClickedIdx=null;}
+  curFolder=folder;curIndex=Math.max(0,Math.min(index,(DATA[folder]||[]).length-1));
+  renderNav();
+  loadSlide();
+}
+
+function loadSlide(){
+  const slide=currentSlide();
+  document.getElementById('empty').style.display=slide?'none':'block';
+  document.getElementById('editor').style.display=slide?'block':'none';
+  if(!slide)return;
+  document.getElementById('title').textContent=slide.name;
+  const time=[slide.start_hhmmss,slide.end_hhmmss].filter(Boolean).join(' - ');
+  document.getElementById('subTitle').textContent=`${curFolder} · ${curIndex+1} / ${DATA[curFolder].length}${time?' · '+time:''}`;
+  updateStatusUi();
+  updateRatioButtons();
+  refreshColorUi();
+  const img=document.getElementById('sourceImg');
+  img.onload=()=>{
+    sourceCanvas.width=img.naturalWidth;sourceCanvas.height=img.naturalHeight;
+    sourceCtx.drawImage(img,0,0);
+    sourcePixels=sourceCtx.getImageData(0,0,sourceCanvas.width,sourceCanvas.height);
+    histSrcCache={key:null,data:null};   // 새 원본 픽셀 → 히스토그램 축소버퍼 캐시 무효화
+    positionHandles();
+    scheduleRender();
+  };
+  img.src=slide.file;
+  img.alt=slide.name;
+}
+
+function updateStatusUi(){
+  const slide=currentSlide();if(!slide)return;
+  const st=statusFor(slide.file);
+  document.getElementById('doneBtn').classList.toggle('on',!!st.done);
+  document.getElementById('excludeBtn').classList.toggle('on',!!st.excluded);
+  document.getElementById('statusBadges').innerHTML=`${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':'<span class="badge">검수 대상</span>'}`;
+}
+
+function updateRatioButtons(){
+  const slide=currentSlide();if(!slide)return;
+  const r=ratioFor(slide.file);
+  document.querySelectorAll('.ratioBtn').forEach(btn=>btn.classList.toggle('on',btn.dataset.ratio===r));
+}
+
+document.querySelectorAll('.ratioBtn').forEach(btn=>btn.onclick=()=>{
+  const slide=currentSlide();if(!slide)return;
+  ratioStore[slide.file]=btn.dataset.ratio;writeStore(LS_RATIOS,ratioStore);
+  updateRatioButtons();scheduleRender();
+});
+
+function toggleStatus(key){
+  const slide=currentSlide();if(!slide)return;
+  const st=statusStore[slide.file]||{};
+  st[key]=!st[key];
+  statusStore[slide.file]=st;
+  writeStore(LS_STATUS,statusStore);
+  updateStatusUi();renderNav();
+}
+
+function bulkSetExcluded(folder,indices,value){
+  const slides=DATA[folder]||[];
+  indices.forEach(i=>{
+    const slide=slides[i];if(!slide)return;
+    statusStore[slide.file]={...statusFor(slide.file),excluded:value};
+  });
+  writeStore(LS_STATUS,statusStore);
+  updateStatusUi();renderNav();
+}
+
+function openCtxMenu(x,y,folder,index){
+  closeCtxMenu();
+  const slide=(DATA[folder]||[])[index];if(!slide)return;
+  const excluded=!!statusFor(slide.file).excluded;
+  const selected=folder===curFolder&&selectedIdx.has(index);
+  const targetIndices=selected?Array.from(selectedIdx):[index];
+  const value=!excluded;
+  const action=value?'exclude':'unexclude';
+  const label=selected?`선택 ${selectedIdx.size}개 ${value?'제외':'제외 해제'}`:(value?'제외':'제외 해제');
+  const menu=document.createElement('div');
+  menu.id='ctxMenu';
+  menu.className='ctxMenu';
+  menu.style.left=x+'px';
+  menu.style.top=y+'px';
+  const fi=folderNames.indexOf(folder);
+  const prevF=folderNames[fi-1],nextF=folderNames[fi+1];
+  const moveLabel=selected?`선택 ${targetIndices.length}개 `:'';
+  menu.innerHTML=`<button class="ctxMenuBtn" data-action="${action}">${label}</button>`
+    +(prevF?`<button class="ctxMenuBtn" data-move="-1">◀ ${moveLabel}이전 화자로 (${esc(prevF)})</button>`:'')
+    +(nextF?`<button class="ctxMenuBtn" data-move="1">${moveLabel}다음 화자로 ▶ (${esc(nextF)})</button>`:'');
+  menu.querySelector('[data-action]').onclick=()=>{
+    bulkSetExcluded(folder,targetIndices,value);
+    closeCtxMenu();
+  };
+  menu.querySelectorAll('[data-move]').forEach(b=>b.onclick=()=>{
+    const delta=+b.dataset.move;const tgt=folderNames[fi+delta];
+    const files=targetIndices.map(i=>(DATA[folder]||[])[i]).filter(Boolean).map(s=>s.file);
+    files.forEach(f=>moveSlideToFolder(f,tgt));
+    selectedIdx.clear();closeCtxMenu();
+  });
+  document.body.appendChild(menu);
+  ctxMenuClickHandler=e=>{if(!menu.contains(e.target))closeCtxMenu();};
+  ctxMenuKeyHandler=e=>{if(e.key==='Escape')closeCtxMenu();};
+  ctxMenuScrollHandler=()=>closeCtxMenu();
+  document.addEventListener('click',ctxMenuClickHandler);
+  document.addEventListener('keydown',ctxMenuKeyHandler);
+  document.addEventListener('scroll',ctxMenuScrollHandler,true);
+}
+
+function closeCtxMenu(){
+  const menu=document.getElementById('ctxMenu');
+  if(menu)menu.remove();
+  if(ctxMenuClickHandler)document.removeEventListener('click',ctxMenuClickHandler);
+  if(ctxMenuKeyHandler)document.removeEventListener('keydown',ctxMenuKeyHandler);
+  if(ctxMenuScrollHandler)document.removeEventListener('scroll',ctxMenuScrollHandler,true);
+  ctxMenuClickHandler=null;
+  ctxMenuKeyHandler=null;
+  ctxMenuScrollHandler=null;
+}
+
+function resetCorners(){
+  const slide=currentSlide();if(!slide)return;
+  delete cornersStore[slide.file];
+  writeStore(LS_CORNERS,cornersStore);
+  positionHandles();scheduleRender();
+}
+
+function moveSlide(delta){
+  if(!curFolder)return;
+  const slides=DATA[curFolder]||[];
+  let next=curIndex;
+  do{
+    next+=delta;
+    if(next<0||next>=slides.length)return;
+  }while(!showExcluded && statusFor(slides[next].file).excluded);
+  if(next!==curIndex)selectSlide(curFolder,next);
+}
+
+function deleteKeyAction(){
+  if(selectedIdx.size>0){
+    bulkSetExcluded(curFolder,Array.from(selectedIdx),true);
+    selectedIdx.clear();
+    lastClickedIdx=null;
+    renderNav();
+    return;
+  }
+  const slide=currentSlide();if(!slide)return;
+  const wasExcluded=!!statusFor(slide.file).excluded;
+  toggleStatus('excluded');
+  if(!wasExcluded && !showExcluded){
+    const before=curIndex;
+    moveSlide(1);
+    if(curIndex===before)moveSlide(-1);
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.target && ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;
+  if(modalOpen())return;      // 확인 대화가 떠 있으면 Delete(제외)·화살표가 뒤로 새지 않게
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='c'){e.preventDefault();copyCorners();}
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='v'){e.preventDefault();pasteCorners();}
+  if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();deleteKeyAction();}
+  if(e.key==='ArrowDown'){e.preventDefault();moveSlide(1);}
+  if(e.key==='ArrowUp'){e.preventDefault();moveSlide(-1);}
+});
+
+function imageRect(){
+  const img=document.getElementById('sourceImg');
+  return {w:img.clientWidth,h:img.clientHeight};
+}
+
+function positionHandles(){
+  const slide=currentSlide();if(!slide)return;
+  const corners=getCorners(slide.file);
+  document.querySelectorAll('.cornerHandle').forEach(h=>{
+    const p=corners[+h.dataset.idx];
+    h.style.left=(p[0]*100)+'%';
+    h.style.top=(p[1]*100)+'%';
+  });
+  document.querySelectorAll('.edgeHandle').forEach(h=>{
+    const a=corners[+h.dataset.a],b=corners[+h.dataset.b];
+    h.style.left=(((a[0]+b[0])/2)*100)+'%';
+    h.style.top=(((a[1]+b[1])/2)*100)+'%';
+  });
+  drawQuad(corners);
+}
+
+function drawQuad(corners){
+  const cv=document.getElementById('quadCanvas');
+  document.getElementById('stage').classList.toggle('degenerate',isDegenerateQuad(corners));
+  const rect=imageRect();
+  cv.width=rect.w;cv.height=rect.h;cv.style.width=rect.w+'px';cv.style.height=rect.h+'px';
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if(!rect.w||!rect.h)return;
+  ctx.strokeStyle='#2563eb';ctx.fillStyle='rgba(37,99,235,.10)';ctx.lineWidth=2;
+  ctx.beginPath();
+  [[0,1],[1,3],[3,2],[2,0]].forEach(([a,b],i)=>{
+    const p=corners[a],q=corners[b];
+    if(i===0)ctx.moveTo(p[0]*rect.w,p[1]*rect.h);
+    ctx.lineTo(q[0]*rect.w,q[1]*rect.h);
+  });
+  ctx.closePath();ctx.fill();ctx.stroke();
+}
+
+function cross(a,b,c){return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);}
+function onSegment(a,b,c){
+  return Math.min(a[0],c[0])-1e-9<=b[0]&&b[0]<=Math.max(a[0],c[0])+1e-9&&
+    Math.min(a[1],c[1])-1e-9<=b[1]&&b[1]<=Math.max(a[1],c[1])+1e-9;
+}
+function segmentsIntersect(a,b,c,d){
+  const o1=cross(a,b,c),o2=cross(a,b,d),o3=cross(c,d,a),o4=cross(c,d,b);
+  if(Math.abs(o1)<1e-9&&onSegment(a,c,b))return true;
+  if(Math.abs(o2)<1e-9&&onSegment(a,d,b))return true;
+  if(Math.abs(o3)<1e-9&&onSegment(c,a,d))return true;
+  if(Math.abs(o4)<1e-9&&onSegment(c,b,d))return true;
+  return (o1>0)!==(o2>0)&&(o3>0)!==(o4>0);
+}
+function isDegenerateQuad(corners){
+  const order=[corners[0],corners[1],corners[3],corners[2]];
+  let area=0;
+  for(let i=0;i<order.length;i++){
+    const p=order[i],q=order[(i+1)%order.length];
+    area+=p[0]*q[1]-q[0]*p[1];
+  }
+  if(Math.abs(area)/2<0.001)return true;
+  return segmentsIntersect(corners[0],corners[1],corners[3],corners[2])||
+    segmentsIntersect(corners[1],corners[3],corners[2],corners[0]);
+}
+
+document.querySelectorAll('.cornerHandle').forEach(handle=>{
+  handle.addEventListener('mousedown',e=>{
+    e.preventDefault();e.stopPropagation();
+    const idx=+handle.dataset.idx;
+    const slide=currentSlide();if(!slide)return;
+    const stage=document.getElementById('stage').getBoundingClientRect();
+    const corners=getCorners(slide.file);
+    const move=ev=>{
+      const x=Math.max(0,Math.min(1,(ev.clientX-stage.left)/stage.width));
+      const y=Math.max(0,Math.min(1,(ev.clientY-stage.top)/stage.height));
+      corners[idx]=[x,y];
+      setCorners(slide.file,corners);
+      positionHandles();
+      scheduleRender();
+    };
+    const up=()=>{document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);};
+    document.addEventListener('mousemove',move);
+    document.addEventListener('mouseup',up);
+  });
+});
+
+document.querySelectorAll('.edgeHandle').forEach(handle=>{
+  handle.addEventListener('mousedown',e=>{
+    e.preventDefault();e.stopPropagation();
+    const a=+handle.dataset.a,b=+handle.dataset.b;
+    const slide=currentSlide();if(!slide)return;
+    const stage=document.getElementById('stage').getBoundingClientRect();
+    const corners=getCorners(slide.file);
+    const startMouse=[
+      Math.max(0,Math.min(1,(e.clientX-stage.left)/stage.width)),
+      Math.max(0,Math.min(1,(e.clientY-stage.top)/stage.height))
+    ];
+    const startA=[corners[a][0],corners[a][1]];
+    const startB=[corners[b][0],corners[b][1]];
+    const move=ev=>{
+      const x=Math.max(0,Math.min(1,(ev.clientX-stage.left)/stage.width));
+      const y=Math.max(0,Math.min(1,(ev.clientY-stage.top)/stage.height));
+      const dx=x-startMouse[0],dy=y-startMouse[1];
+      corners[a]=[Math.max(0,Math.min(1,startA[0]+dx)),Math.max(0,Math.min(1,startA[1]+dy))];
+      corners[b]=[Math.max(0,Math.min(1,startB[0]+dx)),Math.max(0,Math.min(1,startB[1]+dy))];
+      setCorners(slide.file,corners);
+      positionHandles();
+      scheduleRender();
+    };
+    const up=()=>{document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);};
+    document.addEventListener('mousemove',move);
+    document.addEventListener('mouseup',up);
+  });
+});
+
+window.addEventListener('resize',()=>{positionHandles();scheduleRender();});
+
+function scheduleRender(){
+  if(renderQueued)return;
+  renderQueued=true;
+  requestAnimationFrame(()=>{renderQueued=false;renderPreview();drawLevelGraph();});
+}
+
+function destSizeFor(imgW,imgH,corners,ratio){
+  if(ratio==='16:9')return [1280,720];
+  if(ratio==='4:3')return [1200,900];
+  const pts=corners.map(p=>[p[0]*imgW,p[1]*imgH]);
+  const d=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  const w=Math.max(50,(d(pts[0],pts[1])+d(pts[2],pts[3]))/2);
+  const h=Math.max(50,(d(pts[0],pts[2])+d(pts[1],pts[3]))/2);
+  const scale=Math.min(1,1400/Math.max(w,h));
+  return [Math.round(w*scale),Math.round(h*scale)];
+}
+
+function renderPreview(){
+  const slide=currentSlide();
+  if(!slide || !sourcePixels)return;
+  const corners=getCorners(slide.file);
+  // 색보정 모드에서 미리보기 = 워프 + 수동 색보정(원본 비교 중이면 색보정 생략).
+  const color=(colorMode && !colorShowOriginal)?getColor(slide.file):null;
+  renderWarpToCanvas(document.getElementById('preview'),sourcePixels,corners,ratioFor(slide.file),color);
+}
+
+function renderWarpToCanvas(canvas,pixels,corners,ratio,color){
+  const [dw,dh]=destSizeFor(pixels.width,pixels.height,corners,ratio);
+  canvas.width=dw;canvas.height=dh;
+  const ctx=canvas.getContext('2d');
+  const srcPts=corners.map(p=>[p[0]*pixels.width,p[1]*pixels.height]);
+  const H=homography([[0,0],[dw-1,0],[0,dh-1],[dw-1,dh-1]],srcPts);
+  const out=ctx.createImageData(dw,dh);
+  const s=pixels.data,d=out.data,sw=pixels.width,sh=pixels.height;
+  for(let y=0;y<dh;y++){
+    for(let x=0;x<dw;x++){
+      const den=H[6]*x+H[7]*y+1;
+      const sx=(H[0]*x+H[1]*y+H[2])/den;
+      const sy=(H[3]*x+H[4]*y+H[5])/den;
+      const di=(y*dw+x)*4;
+      if(sx>=0&&sy>=0&&sx<sw&&sy<sh){
+        const ix=Math.max(0,Math.min(sw-1,Math.round(sx)));
+        const iy=Math.max(0,Math.min(sh-1,Math.round(sy)));
+        const si=(iy*sw+ix)*4;
+        d[di]=s[si];d[di+1]=s[si+1];d[di+2]=s[si+2];d[di+3]=255;
+      }else{d[di]=255;d[di+1]=255;d[di+2]=255;d[di+3]=255;}
+    }
+  }
+  if(color && !isDefaultColor(color))applyColorToImageData(out,color);
+  ctx.putImageData(out,0,0);
+}
+
+function homography(from,to){
+  const A=[],b=[];
+  for(let i=0;i<4;i++){
+    const [x,y]=from[i], [u,v]=to[i];
+    A.push([x,y,1,0,0,0,-u*x,-u*y]);b.push(u);
+    A.push([0,0,0,x,y,1,-v*x,-v*y]);b.push(v);
+  }
+  return solve(A,b).concat([1]);
+}
+
+function solve(A,b){
+  const n=b.length;
+  const M=A.map((row,i)=>row.concat([b[i]]));
+  for(let col=0;col<n;col++){
+    let pivot=col;
+    for(let r=col+1;r<n;r++)if(Math.abs(M[r][col])>Math.abs(M[pivot][col]))pivot=r;
+    [M[col],M[pivot]]=[M[pivot],M[col]];
+    const div=M[col][col]||1e-12;
+    for(let c=col;c<=n;c++)M[col][c]/=div;
+    for(let r=0;r<n;r++){
+      if(r===col)continue;
+      const f=M[r][col];
+      for(let c=col;c<=n;c++)M[r][c]-=f*M[col][c];
+    }
+  }
+  return M.map(row=>row[n]);
+}
+
+function loadImage(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error('image load failed: '+file));
+    img.src=file;
+  });
+}
+
+async function imageToCanvas(slide){
+  const img=await loadImage(slide.file);
+  const hasOverride=!!cornersStore[slide.file];
+  const canvas=document.createElement('canvas');
+  if(ratioFor(slide.file)!=='free'||hasOverride){
+    const temp=document.createElement('canvas');
+    temp.width=img.naturalWidth;temp.height=img.naturalHeight;
+    const tctx=temp.getContext('2d',{willReadFrequently:true});
+    tctx.drawImage(img,0,0);
+    const pixels=tctx.getImageData(0,0,temp.width,temp.height);
+    renderWarpToCanvas(canvas,pixels,getCorners(slide.file),ratioFor(slide.file));
+  }else{
+    // Uncorrected images keep their natural aspect ratio in the PDF instead of forcing the ratio preset.
+    canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+    canvas.getContext('2d').drawImage(img,0,0);
+  }
+  // JS PDF 내보내기도 미리보기와 동일하게 수동 색보정을 반영(있을 때만).
+  const color=getColor(slide.file);
+  if(!isDefaultColor(color)){
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    const im=ctx.getImageData(0,0,canvas.width,canvas.height);
+    applyColorToImageData(im,color);
+    ctx.putImageData(im,0,0);
+  }
+  return canvas;
+}
+
+function fitRect(iw,ih,pw,ph,margin){
+  const maxW=pw-margin*2,maxH=ph-margin*2;
+  const scale=Math.min(maxW/iw,maxH/ih);
+  const w=iw*scale,h=ih*scale;
+  return {x:(pw-w)/2,y:(ph-h)/2,w,h};
+}
+
+function cancelExport(){exportCancelled=true;}
+
+async function exportCurrentFolder(mode='all'){
+  if(exporting)return;
+  exporting=true;
+  exportCancelled=false;
+  const doneBtnEl=document.getElementById('exportDoneBtn');
+  document.getElementById('exportBtn').disabled=true;
+  if(doneBtnEl)doneBtnEl.disabled=true;
+  document.getElementById('cancelExportBtn').style.display='inline-block';
+  document.getElementById('cancelExportBtn').disabled=false;
+  let exported=0;
+  let cancelled=false;
+  const onlyDone=(mode==='done');
+  try{
+    const folder=curFolder;if(!folder)return;
+    const slides=(DATA[folder]||[]).filter(s=>{
+      const st=statusFor(s.file);
+      return !st.excluded && (!onlyDone || !!st.done);
+    });
+    if(!slides.length){setProgress(onlyDone?'완료 표시된 이미지가 없습니다.':'내보낼 이미지가 없습니다.');return;}
+    if(!window.jspdf||!window.jspdf.jsPDF){setProgress('jsPDF 로드 실패');return;}
+    const {jsPDF}=window.jspdf;
+    let pdf=null;
+    for(let i=0;i<slides.length;i++){
+      setProgress(`${onlyDone?'[완료본] ':''}${i+1} / ${slides.length} 처리 중...`);
+      await new Promise(r=>requestAnimationFrame(r));
+      if(exportCancelled){cancelled=true;break;}
+      const canvas=await imageToCanvas(slides[i]);
+      const landscape=canvas.width>=canvas.height;
+      const page=[landscape?'l':'p','mm','a4'];
+      if(!pdf)pdf=new jsPDF({orientation:page[0],unit:page[1],format:page[2]});
+      else pdf.addPage('a4',landscape?'landscape':'portrait');
+      const pw=pdf.internal.pageSize.getWidth(),ph=pdf.internal.pageSize.getHeight();
+      const r=fitRect(canvas.width,canvas.height,pw,ph,8);
+      pdf.addImage(canvas.toDataURL('image/jpeg',0.92),'JPEG',r.x,r.y,r.w,r.h);
+      exported=i+1;
+      await new Promise(r=>setTimeout(r,0));
+    }
+    if(pdf)pdf.save(`${folder}${onlyDone?'_완료본':''}.pdf`);
+    // 완료본 내보내기 시 위치(코너)·상태 백업 JSON 동시 저장
+    if(onlyDone && exported>0 && !cancelled) exportBackup();
+    setProgress(cancelled?`취소됨: ${exported}/${slides.length} 장까지 내보냄`:`완료: ${exported}장${onlyDone?' — PDF + 위치 백업 저장됨':''}`);
+  }finally{
+    exporting=false;
+    exportCancelled=false;
+    document.getElementById('exportBtn').disabled=false;
+    if(doneBtnEl)doneBtnEl.disabled=false;
+    document.getElementById('cancelExportBtn').disabled=true;
+    document.getElementById('cancelExportBtn').style.display='none';
+  }
+}
+
+function setProgress(text){document.getElementById('progress').textContent=text;}
+
+// ===================== 🎨 수동 색보정 (PhotoScape식) =====================
+// ===COLOR_CORE_START===  (JS↔Python 동일 색연산. 이 블록은 node 파리티 테스트가 그대로 추출·실행하므로
+//                          함수 순수성 유지: DOM/localStorage 접근 금지. Python: color_render.apply_manual_color 와 동일 순서·수식)
+const COLOR_DEFS=[
+  {k:'brightness',label:'밝기',min:-100,max:100,step:1,def:0},
+  {k:'contrast',  label:'대비',min:0.5,max:2,step:0.01,def:1},
+  {k:'saturation',label:'채도',min:0,max:2,step:0.01,def:1},
+  {k:'temp',      label:'색온도(R↑/B↓)',min:-100,max:100,step:1,def:0},
+  {k:'tint',      label:'색조(G)',min:-100,max:100,step:1,def:0},
+  {k:'gamma',     label:'감마',min:0.4,max:2.5,step:0.01,def:1},
+  {k:'whitePct',  label:'화이트포인트',min:80,max:100,step:0.5,def:100},
+  {k:'blackPct',  label:'블랙포인트',min:0,max:10,step:0.5,def:0},
+  {k:'sharpen',   label:'선명도',min:0,max:2,step:0.05,def:0},
+  {k:'y_nlm',     label:'무아레제거',min:0,max:16,step:1,def:0,py:true},
+  {k:'darkUnify', label:'다크영역통일',min:0,max:1,step:0.05,def:0,py:true},
+  // 자동 레벨(채널별 독립 스트레치) 전용 — hidden:true 라 슬라이더로 노출되지 않는다(측정은 코어 밖
+  // autoLevels() 가 하고, 여기 기록된 6개 상수를 6b 단계가 적용한다). min/max/step/hidden 은 UI
+  // 메타데이터일 뿐 연산에 관여하지 않는다. 기본값(0/255)은 항등 → 구 11키 저장값과 완전 호환.
+  {k:'rLo', label:'R 하한',min:0,max:255,step:1,def:0,  hidden:true},
+  {k:'rHi', label:'R 상한',min:0,max:255,step:1,def:255,hidden:true},
+  {k:'gLo', label:'G 하한',min:0,max:255,step:1,def:0,  hidden:true},
+  {k:'gHi', label:'G 상한',min:0,max:255,step:1,def:255,hidden:true},
+  {k:'bLo', label:'B 하한',min:0,max:255,step:1,def:0,  hidden:true},
+  {k:'bHi', label:'B 상한',min:0,max:255,step:1,def:255,hidden:true},
+];
+const DEFAULT_COLOR={};COLOR_DEFS.forEach(d=>{DEFAULT_COLOR[d.k]=d.def;});
+function normColor(p){const o={};COLOR_DEFS.forEach(d=>{let v=(p&&p[d.k]!=null)?+p[d.k]:d.def;if(!isFinite(v))v=d.def;o[d.k]=v;});return o;}
+function isDefaultColor(c){return COLOR_DEFS.every(d=>Math.abs(((c&&c[d.k]!=null)?+c[d.k]:d.def)-d.def)<1e-9);}
+function clamp255f(x){return x<0?0:(x>255?255:x);}
+function percentileFromHist(hist,N,pct){
+  if(N<=0)return 0;
+  let rank=Math.ceil(pct/100*N);if(rank<1)rank=1;if(rank>N)rank=N;
+  let cum=0;for(let v=0;v<256;v++){cum+=hist[v];if(cum>=rank)return v;}return 255;
+}
+function sepBlur1D(src,dst,w,h,horizontal){    // 가우시안 근사 [1,4,6,4,1]/16, 경계 복제(replicate)
+  const k0=1,k1=4,k2=6,k3=4,k4=1,ks=16;
+  for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+    let acc;
+    if(horizontal){
+      const xm2=x>1?x-2:0,xm1=x>0?x-1:0,xp1=x<w-1?x+1:w-1,xp2=x<w-2?x+2:w-1,r=y*w;
+      acc=src[r+xm2]*k0+src[r+xm1]*k1+src[r+x]*k2+src[r+xp1]*k3+src[r+xp2]*k4;
+    }else{
+      const ym2=y>1?y-2:0,ym1=y>0?y-1:0,yp1=y<h-1?y+1:h-1,yp2=y<h-2?y+2:h-1;
+      acc=src[ym2*w+x]*k0+src[ym1*w+x]*k1+src[y*w+x]*k2+src[yp1*w+x]*k3+src[yp2*w+x]*k4;
+    }
+    dst[y*w+x]=acc/ks;
+  }}
+}
+function unsharpChannel(ch,w,h,amt){
+  const n=w*h,tmp=new Float32Array(n),blur=new Float32Array(n);
+  sepBlur1D(ch,tmp,w,h,true);sepBlur1D(tmp,blur,w,h,false);
+  for(let i=0;i<n;i++)ch[i]=clamp255f(ch[i]+amt*(ch[i]-blur[i]));
+}
+// R,G,B: Float32Array(w*h) 0..255. 순서: 밝기→대비→색온도/색조→채도→감마→레벨→자동레벨(채널별)→선명도→[무아레·다크통일]
+function colorPipeline(R,G,B,w,h,pin){
+  const p=normColor(pin),n=w*h;
+  const b=p.brightness,c=p.contrast,sat=p.saturation,temp=p.temp,tint=p.tint,g=p.gamma;
+  const wp=p.whitePct,bp=p.blackPct,sh=p.sharpen,ynlm=p.y_nlm,du=p.darkUnify;
+  const rLo=p.rLo,rHi=p.rHi,gLo=p.gLo,gHi=p.gHi,bLo=p.bLo,bHi=p.bHi;
+  const tR=temp*0.5,tB=-temp*0.5,tG=tint*0.5,invg=1/g;
+  for(let i=0;i<n;i++){
+    let r=R[i],gg=G[i],bb=B[i];
+    r=clamp255f(r+b);gg=clamp255f(gg+b);bb=clamp255f(bb+b);                      // 1 밝기
+    r=clamp255f((r-128)*c+128);gg=clamp255f((gg-128)*c+128);bb=clamp255f((bb-128)*c+128); // 2 대비
+    r=clamp255f(r+tR);gg=clamp255f(gg+tG);bb=clamp255f(bb+tB);                   // 3 색온도/색조
+    if(sat!==1){                                                                 // 4 채도(HSV S*, V=max 유지)
+      const V=r>gg?(r>bb?r:bb):(gg>bb?gg:bb),m=r<gg?(r<bb?r:bb):(gg<bb?gg:bb),C=V-m;
+      if(C>1e-6){const scale=Math.min(sat,V/C);r=V-(V-r)*scale;gg=V-(V-gg)*scale;bb=V-(V-bb)*scale;}
+    }
+    if(g!==1){r=255*Math.pow(clamp255f(r)/255,invg);gg=255*Math.pow(clamp255f(gg)/255,invg);bb=255*Math.pow(clamp255f(bb)/255,invg);} // 5 감마
+    R[i]=clamp255f(r);G[i]=clamp255f(gg);B[i]=clamp255f(bb);
+  }
+  if(bp>0||wp<100){                                                             // 6 레벨(퍼센타일 스트레치)
+    const hist=new Float64Array(256);
+    for(let i=0;i<n;i++){let gray=Math.round(0.299*R[i]+0.587*G[i]+0.114*B[i]);if(gray<0)gray=0;else if(gray>255)gray=255;hist[gray]++;}
+    const lo=percentileFromHist(hist,n,bp),hi=percentileFromHist(hist,n,wp);
+    if(hi-lo>1){const scl=255/(hi-lo);for(let i=0;i<n;i++){R[i]=clamp255f((R[i]-lo)*scl);G[i]=clamp255f((G[i]-lo)*scl);B[i]=clamp255f((B[i]-lo)*scl);}}
+  }
+  // 6b 자동레벨(채널별 독립 스트레치) — 공통 레벨(6) 직후. 순서 고정: Python apply_manual_color 와 동일.
+  // hi<=lo 인 채널은 무동작(0 나눗셈 가드). 기본값 0/255 는 scale=1·offset=0 이라 정확히 항등.
+  if(rHi>rLo){const s=255/(rHi-rLo);for(let i=0;i<n;i++)R[i]=clamp255f((R[i]-rLo)*s);}
+  if(gHi>gLo){const s=255/(gHi-gLo);for(let i=0;i<n;i++)G[i]=clamp255f((G[i]-gLo)*s);}
+  if(bHi>bLo){const s=255/(bHi-bLo);for(let i=0;i<n;i++)B[i]=clamp255f((B[i]-bLo)*s);}
+  if(sh>0){unsharpChannel(R,w,h,sh);unsharpChannel(G,w,h,sh);unsharpChannel(B,w,h,sh);} // 7 선명도
+  if(ynlm>0){                                                                   // 8a 무아레제거(미리보기=약식 luma 근사)
+    const f=Math.min(ynlm/16,1)*0.6,tmp=new Float32Array(n),Y=new Float32Array(n),Yb=new Float32Array(n);
+    for(let i=0;i<n;i++)Y[i]=0.299*R[i]+0.587*G[i]+0.114*B[i];
+    sepBlur1D(Y,tmp,w,h,true);sepBlur1D(tmp,Yb,w,h,false);
+    for(let i=0;i<n;i++){const d=(Yb[i]-Y[i])*f;R[i]=clamp255f(R[i]+d);G[i]=clamp255f(G[i]+d);B[i]=clamp255f(B[i]+d);}
+  }
+  if(du>0){                                                                     // 8b 다크영역통일(chroma→중립; JS·Python 동일)
+    for(let i=0;i<n;i++){const Y=0.299*R[i]+0.587*G[i]+0.114*B[i];let wgt=(48-Y)/48;wgt=wgt<0?0:(wgt>1?1:wgt);wgt*=du;R[i]=R[i]*(1-wgt)+Y*wgt;G[i]=G[i]*(1-wgt)+Y*wgt;B[i]=B[i]*(1-wgt)+Y*wgt;}
+  }
+}
+function applyColorToImageData(imgData,p){
+  const d=imgData.data,w=imgData.width,h=imgData.height,n=w*h;
+  const R=new Float32Array(n),G=new Float32Array(n),B=new Float32Array(n);
+  for(let i=0;i<n;i++){R[i]=d[i*4];G[i]=d[i*4+1];B[i]=d[i*4+2];}
+  colorPipeline(R,G,B,w,h,p);
+  for(let i=0;i<n;i++){d[i*4]=clamp255f(Math.round(R[i]));d[i*4+1]=clamp255f(Math.round(G[i]));d[i*4+2]=clamp255f(Math.round(B[i]));d[i*4+3]=255;}
+}
+// ===COLOR_CORE_END===
+
+// ---- 저장/조회 (DOM·localStorage) ----
+function getColor(file){return normColor(colorStore[file]||null);}
+function setColorObj(file,obj){
+  const c=normColor(obj);
+  if(isDefaultColor(c))delete colorStore[file];else colorStore[file]=c;
+  writeStore(LS_COLOR,colorStore);
+  markColorDirty(file);    // 마지막 백업 이후 보정한 슬라이드 집계 → 백업 유도
+}
+// macOS 파일시스템 경로는 NFD, classification.json speaker 는 NFC 라 정규화 후 대조.
+function clusterOf(file){return clusterByFile[String(file||'').normalize('NFC')]||null;}
+
+// ---- 슬라이더 UI ----
+function fmtVal(v,d){return (d.step<1)?(+v).toFixed(2):String(+v);}
+function buildColorSliders(){
+  const grid=document.getElementById('sliderGrid');if(!grid)return;
+  // hidden:true (자동레벨 rLo..bHi 6개)는 슬라이더로 노출하지 않는다 — 자동 레벨 버튼이 계산해 넣고,
+  // 해제는 ↺(autoLevelsReset) 로 한다. refreshColorSliders 는 행이 없으면 건너뛴다.
+  grid.innerHTML=COLOR_DEFS.filter(d=>!d.hidden).map(d=>`
+    <div class="sliderRow ${d.py?'py':''}" data-k="${d.k}">
+      <label>${d.label}${d.py?'<span class="pybadge" title="미리보기는 약식 근사 · 최종 PDF(파이썬)에서 정밀 적용">PY≈</span>':''}</label>
+      <input type="range" min="${d.min}" max="${d.max}" step="${d.step}" data-k="${d.k}" oninput="onSliderInput('${d.k}',this.value)">
+      <span class="val" id="val_${d.k}"></span>
+      <button class="rst" title="이 항목만 기본값으로" onclick="resetOne('${d.k}')">↺</button>
+    </div>`).join('');
+}
+function refreshColorSliders(){
+  const slide=currentSlide();if(!slide)return;
+  const c=getColor(slide.file);
+  COLOR_DEFS.forEach(d=>{
+    const row=document.querySelector('.sliderRow[data-k="'+d.k+'"]');if(!row)return;
+    row.querySelector('input').value=c[d.k];
+    const vv=document.getElementById('val_'+d.k);if(vv)vv.textContent=fmtVal(c[d.k],d);
+  });
+}
+function updateColorClusterLabel(){
+  const slide=currentSlide();const el=document.getElementById('colorCluster');if(!el)return;
+  if(!slide){el.textContent='';return;}
+  const cl=clusterOf(slide.file),custom=!isDefaultColor(getColor(slide.file));
+  el.textContent=`· 군집: ${cl||'미상'}${custom?' · 수동값 적용됨':' · 기본(원본)'}`;
+}
+// renderUndoUI 포함 — 되돌리기 버튼의 남은 스텝수는 슬라이드별이라 슬라이드 전환(loadSlide)마다 갱신돼야 한다.
+function refreshColorUi(){refreshColorSliders();updateColorClusterLabel();updateAutoLevelUi();updateSaveBar();renderUndoUI();}
+function setColorMsg(t){const el=document.getElementById('colorMsg');if(el)el.textContent=t;}
+
+// ===================== ↩︎ 되돌리기 (슬라이드별 독립 스택 · 슬라이드당 최대 100스텝) =====================
+// 작업 이력은 "한 화면(같은 슬라이드) 안에서만" 관리한다 → 스택을 파일별로 나눈다.
+// 그래서 Ctrl+Z 는 언제나 "지금 보고 있는 이 슬라이드"의 마지막 동작만 되돌린다
+// (화면 밖 슬라이드가 조용히 바뀌는 일이 없다). 다른 장은 그 장으로 가서 되돌린다.
+//
+// 스냅샷은 변경 *전* 값이며, 스텝 경계는 "사용자가 인지하는 동작 1회"로 잡는다:
+//   · 슬라이더/레벨핸들 → input 마다가 아니라 mousedown(드래그 시작) 1회. 드래그 전체가 1스텝.
+//     (input 마다 쌓으면 드래그 한 번에 100스텝이 다 차버린다 — 이 경계가 이 기능의 핵심이다.)
+//   · 자동 4종·스포이드·리셋·군집불러오기 → 클릭 1회 = 1스텝.
+//   · 이 화자 전체/같은 군집/전체 → 대상 37장 "각각의 스택"에 자기 이전 값이 1스텝씩 쌓인다.
+//     ⇒ Ctrl+Z 는 현재 1장만 되돌린다. 나머지 36장은 각자의 스택에 이력이 남아 있다.
+// 저장 위치는 세션 메모리다(localStorage 아님) — 새로고침 뒤 "언제 적 동작인지 모를 undo"를 남기지 않는다.
+// 색보정값 자체는 기존대로 localStorage 에 저장되므로, 스택이 비워져도 작업물은 그대로다.
+// Redo(⇧⌘Z)는 범위 밖 — 만들지 않는다.
+const UNDO_MAX=100;    // 슬라이드당
+let undoStacks={};     // {file:[{label, ts, prev}, ...]} — 뒤가 최신
+function pushUndo(label,files){
+  (files||[]).filter(Boolean).forEach(f=>{
+    const st=undoStacks[f]||(undoStacks[f]=[]);
+    // ⚠️ 깊은 복사 필수 — 얕게 담으면 이후 보정이 스냅샷까지 바꿔버린다.
+    st.push({label,ts:Date.now(),prev:JSON.parse(JSON.stringify(getColor(f)))});
+    if(st.length>UNDO_MAX)st.shift();    // 가장 오래된 것부터 버림
+  });
+  renderUndoUI();
+}
+function pushUndoCur(label){const s=currentSlide();if(s)pushUndo(label,[s.file]);}
+function doUndo(){
+  const slide=currentSlide();if(!slide)return;
+  const st=undoStacks[slide.file];
+  if(!st||!st.length)return;             // 이 슬라이드에 되돌릴 게 없으면 무동작(다른 장으로 넘어가지 않는다)
+  const snap=st.pop();
+  setColorObj(slide.file,snap.prev);     // prev 가 기본값이면 setColorObj 가 항목을 지운다(= 원본 상태 복원)
+  refreshColorUi();scheduleRender();     // refreshColorUi 안에서 renderUndoUI 가 다시 그린다
+  setColorMsg(`↩︎ 되돌림: ${snap.label} · 남은 ${st.length}스텝`);
+}
+// 남은 스텝 수는 항상 "현재 슬라이드" 기준이다 → refreshColorUi(=슬라이드 전환 시 호출됨)가 부른다.
+function renderUndoUI(){
+  const b=document.getElementById('undoBtn');if(!b)return;
+  const slide=currentSlide();
+  const st=(slide&&undoStacks[slide.file])||[];
+  const n=st.length;
+  b.disabled=!n;
+  // 라벨은 고정('↩︎ 되돌리기') — 남은 스텝수는 툴팁으로. 라벨에 넣으면 autoBar 가 접히고 폭이 흔들린다.
+  b.title=n
+    ?`이 슬라이드의 마지막 동작을 되돌립니다: ${st[n-1].label}\n`
+     +`${n}스텝 남음 (슬라이드마다 따로 · 최대 ${UNDO_MAX}스텝 · 새로고침하면 비워집니다)\nCtrl+Z / ⌘Z`
+    :'이 슬라이드에는 되돌릴 동작이 없습니다\nCtrl+Z / ⌘Z';
+}
+// 텍스트 입력류에서만 브라우저 기본 undo 에 양보한다.
+// range 슬라이더는 기본 undo 가 없고, 드래그 직후 포커스가 슬라이더에 남으므로
+// 여기서 INPUT 전체를 막으면 "드래그 → Ctrl+Z" 가 먹지 않는다.
+function isTextEntry(el){
+  if(!el)return false;
+  if(el.isContentEditable)return true;
+  const t=el.tagName;
+  if(t==='TEXTAREA'||t==='SELECT')return true;
+  return t==='INPUT'&&!/^(range|checkbox|radio|button|submit|reset|file)$/i.test(el.type||'text');
+}
+// 단축키: 사용자는 "cntl+z" 라 했지만 macOS 라 ⌘Z 도 함께 받는다.
+document.addEventListener('keydown',e=>{
+  if(!((e.metaKey||e.ctrlKey)&&(e.key==='z'||e.key==='Z')))return;
+  if(e.shiftKey)return;              // ⇧⌘Z(재실행)는 지원하지 않음 — 기본 동작에 양보
+  if(isTextEntry(e.target))return;
+  if(modalOpen())return;             // 확인 대화가 떠 있으면 뒤로 새지 않게 (기존 키 핸들러와 동일 규칙)
+  if(!colorMode)return;              // 색보정 모드 밖에선 미리보기에 보정이 반영되지 않아 되돌려도 보이지 않는다
+  e.preventDefault();
+  doUndo();
+});
+
+function onSliderInput(k,v){
+  const slide=currentSlide();if(!slide)return;
+  const c=getColor(slide.file);c[k]=+v;setColorObj(slide.file,c);
+  const def=COLOR_DEFS.find(d=>d.k===k);const vv=document.getElementById('val_'+k);if(vv&&def)vv.textContent=fmtVal(v,def);
+  updateColorClusterLabel();scheduleRender();
+}
+function resetOne(k){
+  const slide=currentSlide();if(!slide)return;
+  const d=COLOR_DEFS.find(x=>x.k===k);
+  pushUndoCur(`${d?d.label:k} 초기화`);
+  const c=getColor(slide.file);c[k]=DEFAULT_COLOR[k];setColorObj(slide.file,c);
+  refreshColorSliders();updateColorClusterLabel();scheduleRender();
+}
+// ⚠️ setColorObj 를 거치지 않고 colorStore 를 직접 지운다 → grep 'setColorObj' 로는 안 잡히는 변경점.
+function resetColor(){
+  const slide=currentSlide();if(!slide)return;
+  pushUndoCur('원본 리셋');
+  delete colorStore[slide.file];writeStore(LS_COLOR,colorStore);
+  markColorDirty(slide.file);              // 리셋도 백업해야 할 변경이다
+  refreshColorUi();scheduleRender();setColorMsg('원본 리셋됨 (자동 레벨 포함 전부 해제)');
+}
+// classification.json 군집 자동 파라미터 → 슬라이더값 근사(자동값 불러오기)
+function clusterPresetFor(cl){
+  if(!clusterParams||!clusterParams[cl])return null;
+  const cp=clusterParams[cl],e=cp.enhance||{};
+  return normColor({
+    gamma:cp.gamma!=null?cp.gamma:1,
+    whitePct:e.white_pct!=null?e.white_pct:100,
+    blackPct:e.black_pct!=null?e.black_pct:0,
+    sharpen:e.unsharp_amt!=null?e.unsharp_amt:0,
+    y_nlm:e.y_nlm!=null?e.y_nlm:0,
+    darkUnify:cp.neutralize_dark?(cp.dark_chroma_amt||0):0,
+  });
+}
+function loadClusterPreset(){
+  const slide=currentSlide();if(!slide)return;
+  const cl=clusterOf(slide.file),preset=clusterPresetFor(cl);
+  if(!preset){setColorMsg(clusterParams?('군집 정보 없음('+(cl||'미상')+')'):'classification.json 로드 안됨');return;}
+  pushUndoCur('자동값(군집) 불러오기');    // 실제로 값이 바뀌는 지점에서만 — 위 조기 return 뒤
+  setColorObj(slide.file,preset);refreshColorUi();scheduleRender();
+  setColorMsg(`군집 '${cl}' 자동값 불러옴`);
+}
+// 일괄 적용
+function targetFilesFor(scope){
+  const slide=currentSlide();if(!slide)return [];
+  if(scope==='speaker')return (DATA[curFolder]||[]).map(s=>s.file);
+  if(scope==='all'){const all=[];folderNames.forEach(f=>(DATA[f]||[]).forEach(s=>all.push(s.file)));return all;}
+  if(scope==='cluster'){
+    const cl=clusterOf(slide.file);if(!cl)return [];
+    const all=[];folderNames.forEach(f=>(DATA[f]||[]).forEach(s=>{if(clusterOf(s.file)===cl)all.push(s.file);}));return all;
+  }
+  return [];
+}
+function applyColorTo(scope){
+  const slide=currentSlide();if(!slide)return;
+  if(scope==='cluster'&&!clusterOf(slide.file)){setColorMsg('군집 정보 없음(classification.json)');return;}
+  const src=getColor(slide.file),files=targetFilesFor(scope);
+  const lbl={speaker:'이 화자 전체',cluster:'같은 군집 전체',all:'전체'}[scope]||scope;
+  pushUndo(lbl,files);    // 대상 각 장의 스택에 덮어쓰기 *전* 값을 1스텝씩 (되돌리기는 슬라이드별)
+  let n=0;files.forEach(f=>{setColorObj(f,src);n++;});
+  scheduleRender();updateColorClusterLabel();
+  setColorMsg(`${lbl} ${n}장에 적용됨 · ↩︎ 되돌리기(Ctrl+Z)는 슬라이드마다 따로 적용됩니다`);
+}
+// 모드/미리보기 토글
+function toggleColorMode(){
+  colorMode=!colorMode;
+  document.body.classList.toggle('colormode',colorMode);
+  document.getElementById('colorModeBtn').classList.toggle('on',colorMode);
+  if(!colorMode){setEyedropper(false);colorShowOriginal=false;const ba=document.getElementById('beforeAfterBtn');if(ba){ba.classList.remove('on');ba.textContent='원본 비교';}}
+  refreshColorUi();scheduleRender();
+}
+function toggleBeforeAfter(){
+  colorShowOriginal=!colorShowOriginal;
+  const btn=document.getElementById('beforeAfterBtn');
+  btn.classList.toggle('on',colorShowOriginal);btn.textContent=colorShowOriginal?'보정 후 보기':'원본 비교';
+  scheduleRender();
+}
+function toggleZoom(){
+  const wrap=document.getElementById('previewWrap');const on=wrap.classList.toggle('zoom100');
+  document.getElementById('zoomBtn').classList.toggle('on',on);
+}
+
+// ===== 슬라이더 격자 유틸 (COLOR_DEFS 의 min/max/step 을 단일 출처로 사용) =====
+// 스포이드·레벨핸들이 만든 값은 반드시 이 격자에 스냅한다. range input 은 값을 step 격자로
+// 재정규화하므로, 스냅 없이 저장하면 "저장값 ≠ 슬라이더 표시값" 불일치가 생긴다.
+function quantToDef(k,v){
+  const d=COLOR_DEFS.find(x=>x.k===k);if(!d||!isFinite(v))return v;
+  let q=Math.round((v-d.min)/d.step)*d.step+d.min;
+  if(q<d.min)q=d.min;if(q>d.max)q=d.max;
+  return +q.toFixed(6);
+}
+function wasClamped(k,v){const d=COLOR_DEFS.find(x=>x.k===k);return !!d&&(v<d.min-1e-9||v>d.max+1e-9);}
+
+// ===== 💧 화이트밸런스 스포이드 =====
+let eyedropOn=false;
+function setEyedropper(on){
+  eyedropOn=!!on;
+  document.body.classList.toggle('eyedropping',eyedropOn);
+  const b=document.getElementById('eyedropBtn');if(b)b.classList.toggle('on',eyedropOn);
+}
+function toggleEyedropper(){
+  setEyedropper(!eyedropOn);
+  setColorMsg(eyedropOn?'스포이드: 회색이어야 할 곳을 미리보기에서 클릭 (Esc 취소)':'');
+}
+// 미리보기 캔버스는 "이미 보정된" 픽셀이라 그대로 샘플하면 안 된다.
+// → 같은 코너/비율로 color=null 오프스크린 워프를 1회 돌려 미보정 원값을 얻는다(좌표계 동일).
+function rawWarpImageData(){
+  const slide=currentSlide();if(!slide||!sourcePixels)return null;
+  const cv=document.createElement('canvas');
+  renderWarpToCanvas(cv,sourcePixels,getCorners(slide.file),ratioFor(slide.file),null);
+  return cv.getContext('2d',{willReadFrequently:true}).getImageData(0,0,cv.width,cv.height);
+}
+function sample5x5(im,cx,cy){    // 사진 노이즈 대응
+  let r=0,g=0,b=0,n=0;
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+    const x=Math.max(0,Math.min(im.width-1,cx+dx)),y=Math.max(0,Math.min(im.height-1,cy+dy));
+    const i=(y*im.width+x)*4;
+    r+=im.data[i];g+=im.data[i+1];b+=im.data[i+2];n++;
+  }
+  return [r/n,g/n,b/n];
+}
+function eyedropAt(clientX,clientY){
+  const slide=currentSlide();if(!slide)return;
+  const cv=document.getElementById('preview');
+  const rect=cv.getBoundingClientRect();
+  if(!rect.width||!rect.height)return;
+  const raw=rawWarpImageData();if(!raw)return;
+  // fit/zoom100 양쪽에서 성립 (캔버스 종횡비 보존)
+  const cx=Math.round((clientX-rect.left)*(cv.width/rect.width));
+  const cy=Math.round((clientY-rect.top)*(cv.height/rect.height));
+  if(cx<0||cy<0||cx>=raw.width||cy>=raw.height)return;
+  let [r,g,b]=sample5x5(raw,cx,cy);
+  const c=getColor(slide.file);
+  // ⚠️ 아래 2줄은 COLOR 코어 1-2단계(밝기→대비)와 동일 수식이다. 코어 수식이 바뀌면 여기도 동기화 필요.
+  const cl=x=>x<0?0:(x>255?255:x);
+  r=cl(r+c.brightness);g=cl(g+c.brightness);b=cl(b+c.brightness);                            // 1 밝기
+  r=cl((r-128)*c.contrast+128);g=cl((g-128)*c.contrast+128);b=cl((b-128)*c.contrast+128);    // 2 대비
+  // 코어 3단계는 R+=temp/2, G+=tint/2, B-=temp/2 → 이 점을 (r+b)/2 중성회색으로 만드는 해:
+  const rawTemp=b-r, rawTint=r+b-2*g;
+  const temp=quantToDef('temp',rawTemp), tint=quantToDef('tint',rawTint);
+  pushUndoCur('스포이드');    // 좌표/샘플 유효성 검사를 모두 통과한 뒤 = 실제로 값이 바뀔 때만
+  c.temp=temp;c.tint=tint;setColorObj(slide.file,c);    // 나머지 파라미터는 보존
+  refreshColorUi();scheduleRender();
+  setColorMsg((wasClamped('temp',rawTemp)||wasClamped('tint',rawTint))
+    ?`색편차 큼 — 부분 보정 (색온도 ${temp} / 색조 ${tint} · 요구값 ${Math.round(rawTemp)}/${Math.round(rawTint)})`
+    :`화이트밸런스 적용: 색온도 ${temp} / 색조 ${tint} (밝기·대비 변경 시 재클릭)`);
+  setEyedropper(false);    // 원샷
+}
+
+// ===== 📊 레벨 그래프 — 기존 blackPct/whitePct/gamma 의 두 번째 뷰(신규 저장소 없음) =====
+const LG_W=256,LG_H=120,LG_PLOT=100;    // 하단 20px = 핸들 스트립
+let histSrcCache={key:null,data:null};
+let lgHist=null,lgN=0,lgDrag=null,lgRef=null;
+
+// 히스토그램 입력 = 미보정 워프의 축소 표본. 코너/비율이 그대로면 캐시 재사용 →
+// 슬라이더를 흔들어도 워프는 다시 안 돈다(색보정 모드에선 코너 핸들이 숨겨져 사실상 항상 캐시 히트).
+// 스무딩 off = 최근접 점표본이라 원본 luma 분포의 비편향 표본이 된다(평활 축소는 분포를 왜곡).
+function histSourceImageData(){
+  const slide=currentSlide();if(!slide||!sourcePixels)return null;
+  const corners=getCorners(slide.file),ratio=ratioFor(slide.file);
+  const key=slide.file+'|'+ratio+'|'+JSON.stringify(corners);
+  if(histSrcCache.key===key&&histSrcCache.data)return histSrcCache.data;
+  const full=document.createElement('canvas');
+  renderWarpToCanvas(full,sourcePixels,corners,ratio,null);
+  const sw=Math.max(1,Math.min(320,full.width));
+  const sh=Math.max(1,Math.round(full.height*(sw/full.width)));
+  const small=document.createElement('canvas');small.width=sw;small.height=sh;
+  const sctx=small.getContext('2d',{willReadFrequently:true});
+  sctx.imageSmoothingEnabled=false;
+  sctx.drawImage(full,0,0,sw,sh);
+  histSrcCache={key,data:sctx.getImageData(0,0,sw,sh)};
+  return histSrcCache.data;
+}
+// 레벨(6단계) "직전" 상태 = 코어를 그대로 재사용해 1~5단계만 통과시킨 결과.
+// whitePct=100/blackPct=0/sharpen=0/y_nlm=0/darkUnify=0 → 6·7·8단계가 코어 내부 가드로 전부 스킵된다.
+function computeLevelHist(){
+  const src=histSourceImageData(),slide=currentSlide();
+  if(!src||!slide){lgHist=null;lgN=0;return;}
+  const copy=new ImageData(new Uint8ClampedArray(src.data),src.width,src.height);
+  applyColorToImageData(copy,{...getColor(slide.file),whitePct:100,blackPct:0,sharpen:0,y_nlm:0,darkUnify:0});
+  const hist=new Float64Array(256),d=copy.data,n=src.width*src.height;
+  for(let i=0;i<n;i++){
+    let g=Math.round(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2]);
+    if(g<0)g=0;else if(g>255)g=255;
+    hist[g]++;
+  }
+  lgHist=hist;lgN=n;
+}
+function cumTo(v){let c=0;for(let i=0;i<=v;i++)c+=lgHist[i];return c;}
+// 파라미터 → 핸들 위치(luma 0..255). percentileFromHist(코어, nearest-rank)로 역산해 라운드트립 성립.
+// blackPct=0 / whitePct=100 은 코어에서 레벨 단계 자체가 스킵되므로 핸들을 양 끝(0·255)에 둔다.
+function levelHandles(){
+  const slide=currentSlide();if(!slide||!lgHist)return null;
+  const c=getColor(slide.file);
+  const vB=c.blackPct<=0?0:percentileFromHist(lgHist,lgN,c.blackPct);
+  const vW=c.whitePct>=100?255:percentileFromHist(lgHist,lgN,c.whitePct);
+  const m=Math.pow(0.5,c.gamma);    // 감마 → 중간핸들 상대위치 (아래 lgApply 의 역함수)
+  return {vB,vW,vM:vB+m*Math.max(1,vW-vB)};
+}
+function drawLevelGraph(){
+  const cv=document.getElementById('levelGraph');if(!cv)return;
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,LG_W,LG_H);
+  if(!colorMode)return;                       // 색보정 모드 밖에선 축소워프 비용도 들이지 않는다
+  computeLevelHist();
+  ctx.fillStyle='#f8fafc';ctx.fillRect(0,0,LG_W,LG_PLOT);
+  ctx.fillStyle='#eef2f7';ctx.fillRect(0,LG_PLOT,LG_W,LG_H-LG_PLOT);
+  if(!lgHist){ctx.fillStyle='#94a3b8';ctx.font='11px sans-serif';ctx.fillText('이미지 로딩 중…',8,20);return;}
+  let mx=0;for(let i=0;i<256;i++)if(lgHist[i]>mx)mx=lgHist[i];
+  if(mx>0){
+    ctx.fillStyle='#94a3b8';
+    for(let i=0;i<256;i++){
+      const hgt=Math.sqrt(lgHist[i]/mx)*(LG_PLOT-4);   // √스케일: 슬라이드 배경 스파이크에 눌리지 않게
+      if(hgt>0)ctx.fillRect(i,LG_PLOT-hgt,1,hgt);
+    }
+  }
+  const H=levelHandles();if(!H)return;
+  ctx.fillStyle='rgba(185,28,28,.10)';ctx.fillRect(0,0,H.vB,LG_PLOT);              // 블랙 클리핑 구간
+  ctx.fillStyle='rgba(37,99,235,.10)';ctx.fillRect(H.vW,0,LG_W-H.vW,LG_PLOT);      // 화이트 클리핑 구간
+  [[H.vB,'#0f172a'],[H.vM,'#94a3b8'],[H.vW,'#ffffff']].forEach(([v,col])=>{
+    ctx.strokeStyle='rgba(51,65,85,.45)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(v+.5,0);ctx.lineTo(v+.5,LG_PLOT);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(v,LG_PLOT+2);ctx.lineTo(v-5,LG_H-2);ctx.lineTo(v+5,LG_H-2);ctx.closePath();
+    ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#334155';ctx.stroke();
+  });
+}
+function lgValueFromEvent(e){
+  const cv=document.getElementById('levelGraph'),r=cv.getBoundingClientRect();
+  if(!r.width)return 0;
+  const v=Math.round((e.clientX-r.left)/r.width*255);
+  return v<0?0:(v>255?255:v);
+}
+function lgHitTest(v){    // 가장 가까운 핸들이 잡힌다
+  const H=levelHandles();if(!H)return null;
+  let best=null,bd=Infinity;
+  [['black',H.vB],['mid',H.vM],['white',H.vW]].forEach(([k,hv])=>{
+    const d=Math.abs(hv-v);if(d<bd){bd=d;best=k;}
+  });
+  return best;
+}
+// 핸들 → 기존 파라미터 역산 (신규 파라미터 없음)
+// H(기준 프레임)는 드래그 시작 시점에 고정한다(lgRef). 감마는 레벨보다 앞 단계라 감마를 바꾸면
+// 히스토그램이 움직이고, 그러면 vB/vW 도 따라 움직인다 → 매 mousemove 마다 기준을 다시 재면
+// 양의 되먹임이 걸려 감마가 한계값까지 폭주한다. 기준 고정 시 히스토그램은 (안내문대로) 여전히
+// 움직이되 드래그는 안정적이다. blackPct=0·whitePct=100(기본값)이면 vB/vW 는 0·255 고정이라 차이 없음.
+function lgApply(kind,v){
+  const slide=currentSlide();if(!slide||!lgHist)return;
+  const H=lgRef||levelHandles();if(!H)return;
+  const c=getColor(slide.file);
+  if(kind==='black'){
+    if(v>=H.vW)v=H.vW-1;if(v<0)v=0;
+    c.blackPct=quantToDef('blackPct',cumTo(v)/lgN*100);
+  }else if(kind==='white'){
+    if(v<=H.vB)v=H.vB+1;if(v>255)v=255;
+    c.whitePct=quantToDef('whitePct',cumTo(v)/lgN*100);
+  }else{
+    let m=(v-H.vB)/Math.max(1,H.vW-H.vB);
+    const eps=1e-3;if(m<eps)m=eps;if(m>1-eps)m=1-eps;
+    // ⚠️ 포토샵 공식 gamma=log(0.5)/log(m) 은 out=in^gamma 규약 기준이다.
+    // 이 파이프라인의 코어 5단계는 out=in^(1/g) 이므로 역수인 g=log(m)/log(0.5) 를 써야
+    // m 이 실제로 0.5 로 사상되고, levelHandles() 의 m=0.5^g 와 라운드트립이 성립한다.
+    c.gamma=quantToDef('gamma',Math.log(m)/Math.log(0.5));
+  }
+  setColorObj(slide.file,c);
+  refreshColorUi();scheduleRender();
+}
+(function bindLevelGraph(){
+  const cv=document.getElementById('levelGraph');if(!cv)return;
+  const move=e=>{if(!lgDrag)return;e.preventDefault();lgApply(lgDrag,lgValueFromEvent(e));};
+  const up=()=>{
+    if(!lgDrag)return;
+    lgDrag=null;lgRef=null;
+    document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);
+  };
+  cv.addEventListener('mousedown',e=>{
+    if(!colorMode||!lgHist)return;
+    e.preventDefault();
+    const v=lgValueFromEvent(e);
+    lgDrag=lgHitTest(v);if(!lgDrag)return;
+    // 드래그 시작 1회만 = 1스텝 (lgApply 는 mousemove 마다 불리므로 거기서 쌓으면 안 된다)
+    pushUndoCur({black:'레벨 그래프(블랙포인트)',mid:'레벨 그래프(감마)',white:'레벨 그래프(화이트포인트)'}[lgDrag]||'레벨 그래프');
+    lgRef=levelHandles();          // 기준 프레임 고정(드래그 중 되먹임 방지)
+    lgApply(lgDrag,v);
+    document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  });
+})();
+// 자동 콘트라스트 — RGB 공통 퍼센타일 스트레치(기존 파라미터 2개만 설정).
+// 0.5/99.5 는 슬라이더 step(0.5) 격자에 정확히 얹히는 값이자 포토샵 '자동 콘트라스트'의 기본 클립률이다.
+function autoContrast(){
+  const slide=currentSlide();if(!slide)return;
+  pushUndoCur('자동 콘트라스트');
+  const c=getColor(slide.file);
+  c.blackPct=0.5;c.whitePct=99.5;
+  setColorObj(slide.file,c);
+  refreshColorUi();scheduleRender();
+  setColorMsg('자동 콘트라스트: 상·하위 0.5% 클립 (RGB 공통 · 색은 그대로)');
+}
+
+// ===================== ⚡ 자동 보정 4종 =====================
+// 설계 원칙: 측정은 코어 밖(축소 워프 버퍼)에서, 적용은 코어 안(고정 상수)에서.
+//  · 자동 레벨   → 신규 6파라미터(rLo..bHi) = 코어 6b 단계        ⇒ 파리티 케이스로 검증됨
+//  · 나머지 3종  → 기존 파라미터(blackPct/whitePct/temp/tint)에 씀 ⇒ 코어 불변, 파리티 무영향
+// 어느 쪽이든 최종적으로 "슬라이더값(상수)"만 남으므로 미리보기(JS)와 최종 PDF(Python)는
+// 같은 상수를 같은 수식에 넣게 되어 결과가 일치한다. (측정 자체는 파리티 대상이 아니다)
+const AUTOLV_OFF={rLo:0,rHi:255,gLo:0,gHi:255,bLo:0,bHi:255};   // 자동레벨 무동작(항등) 상태
+const AUTOLV_CLIP=0.1;                                          // 채널별 클립률(포토샵 자동 레벨 기본)
+function isAutoLevelOn(c){return Object.keys(AUTOLV_OFF).some(k=>c[k]!==AUTOLV_OFF[k]);}
+function updateAutoLevelUi(){
+  const slide=currentSlide();
+  const on=!!slide&&isAutoLevelOn(getColor(slide.file));
+  const b=document.getElementById('autoLevelsBtn');if(b)b.classList.toggle('on',on);
+  const r=document.getElementById('autoLevelsRstBtn');if(r)r.classList.toggle('show',on);
+}
+// 측정 버퍼 — 레벨 그래프와 같은 축소 워프(≤320px, 코너/비율 기준 캐시됨)에 코어를 그대로 돌린다.
+// overrides 로 "어느 단계까지 통과시킬지"만 정한다 → 수식을 여기 복제하지 않는다(코어가 단일 출처).
+function measureBuffer(overrides){
+  const src=histSourceImageData(),slide=currentSlide();
+  if(!src||!slide)return null;
+  const copy=new ImageData(new Uint8ClampedArray(src.data),src.width,src.height);
+  applyColorToImageData(copy,{...getColor(slide.file),...overrides});
+  return copy;
+}
+// 자동 레벨 — 채널별 독립 0.1%/99.9% 퍼센타일 스트레치(포토샵 Auto Levels). 색캐스트가 제거된다.
+// 측정 시점 = 코어 6b 단계의 입력(=1~6단계 통과, 6b·7·8 off)이라야 기록한 상수가 실제로 그 의미를 갖는다.
+function autoLevels(){
+  const slide=currentSlide();if(!slide)return;
+  const buf=measureBuffer({...AUTOLV_OFF,sharpen:0,y_nlm:0,darkUnify:0});
+  if(!buf){setColorMsg('이미지 로딩 중 — 잠시 후 다시 눌러주세요');return;}
+  pushUndoCur('자동 레벨');    // 측정 성공 뒤 = 실제로 값이 바뀔 때만
+  const d=buf.data,n=buf.width*buf.height;
+  const hist={r:new Float64Array(256),g:new Float64Array(256),b:new Float64Array(256)};
+  for(let i=0;i<n;i++){hist.r[d[i*4]]++;hist.g[d[i*4+1]]++;hist.b[d[i*4+2]]++;}
+  const c=getColor(slide.file),flat=[];
+  ['r','g','b'].forEach(ch=>{
+    const lo=percentileFromHist(hist[ch],n,AUTOLV_CLIP),hi=percentileFromHist(hist[ch],n,100-AUTOLV_CLIP);
+    if(hi-lo<2){c[ch+'Lo']=0;c[ch+'Hi']=255;flat.push(ch.toUpperCase());return;}  // 평탄 채널 → 무동작
+    c[ch+'Lo']=lo;c[ch+'Hi']=hi;
+  });
+  setColorObj(slide.file,c);
+  refreshColorUi();scheduleRender();
+  setColorMsg(`자동 레벨: R ${c.rLo}–${c.rHi} · G ${c.gLo}–${c.gHi} · B ${c.bLo}–${c.bHi}`
+    +(flat.length?` (${flat.join('/')} 채널은 평탄 — 건너뜀)`:' (채널별 스트레치 → 색캐스트 제거)'));
+}
+function autoLevelsReset(){
+  const slide=currentSlide();if(!slide)return;
+  pushUndoCur('자동 레벨 해제');
+  setColorObj(slide.file,{...getColor(slide.file),...AUTOLV_OFF});
+  refreshColorUi();scheduleRender();
+  setColorMsg('자동 레벨 해제됨 (나머지 보정값은 유지)');
+}
+// gray-world 평균 — 코어 1~2단계(밝기·대비)만 통과시킨 전체 평균 RGB.
+// 스포이드(eyedropAt)와 같은 기준이라 두 기능의 결과가 서로 일관된다.
+// temp/tint=0 으로 재는 것이 정의상 옳다: 코어 3단계가 R+=temp/2, B-=temp/2 이므로 R+B 는 temp 에
+// 불변(=색조 계산이 색온도와 무관)이고, G 만 tint 에 선형이다. 0 에서 재야 클램프 왜곡도 없다.
+function grayWorldMeans(){
+  const buf=measureBuffer({temp:0,tint:0,saturation:1,gamma:1,whitePct:100,blackPct:0,
+                           sharpen:0,y_nlm:0,darkUnify:0,...AUTOLV_OFF});
+  if(!buf)return null;
+  const d=buf.data,n=buf.width*buf.height;
+  let r=0,g=0,b=0;
+  for(let i=0;i<n;i++){r+=d[i*4];g+=d[i*4+1];b+=d[i*4+2];}
+  return [r/n,g/n,b/n];
+}
+// 자동 화이트밸런스 — 전체 평균을 중성 회색으로(색온도+색조). 수식은 스포이드와 동일(코어 3단계 역산).
+function autoWhiteBalance(){
+  const slide=currentSlide();if(!slide)return;
+  const m=grayWorldMeans();
+  if(!m){setColorMsg('이미지 로딩 중 — 잠시 후 다시 눌러주세요');return;}
+  const [r,g,b]=m;
+  const rawTemp=b-r,rawTint=r+b-2*g;
+  const temp=quantToDef('temp',rawTemp),tint=quantToDef('tint',rawTint);
+  pushUndoCur('자동 화이트밸런스');    // 측정 성공 뒤 = 실제로 값이 바뀔 때만
+  const c=getColor(slide.file);c.temp=temp;c.tint=tint;setColorObj(slide.file,c);
+  refreshColorUi();scheduleRender();
+  setColorMsg((wasClamped('temp',rawTemp)||wasClamped('tint',rawTint))
+    ?`자동 WB: 색편차 큼 — 부분 보정 (색온도 ${temp} / 색조 ${tint} · 요구값 ${Math.round(rawTemp)}/${Math.round(rawTint)})`
+    :`자동 화이트밸런스: 색온도 ${temp} / 색조 ${tint} (전체 평균 → 중성 회색)`);
+}
+// 자동 색조 — 녹↔마젠타 축만(tint). 색온도는 건드리지 않는다.
+function autoTint(){
+  const slide=currentSlide();if(!slide)return;
+  const m=grayWorldMeans();
+  if(!m){setColorMsg('이미지 로딩 중 — 잠시 후 다시 눌러주세요');return;}
+  const [r,g,b]=m;
+  const rawTint=r+b-2*g;
+  const tint=quantToDef('tint',rawTint);
+  pushUndoCur('자동 색조');    // 측정 성공 뒤 = 실제로 값이 바뀔 때만
+  const c=getColor(slide.file);c.tint=tint;setColorObj(slide.file,c);   // temp 불변
+  refreshColorUi();scheduleRender();
+  setColorMsg(wasClamped('tint',rawTint)
+    ?`자동 색조: 편차 큼 — 부분 보정 (색조 ${tint} · 요구값 ${Math.round(rawTint)})`
+    :`자동 색조: 색조 ${tint} (녹↔마젠타 축만 · 색온도 불변)`);
+}
+
+// ===================== 인라인 확인 대화 (prompt()/confirm() 금지) =====================
+let modalOnOk=null,modalKeyHandler=null;
+function modalOpen(){const b=document.getElementById('modalBack');return !!b&&b.classList.contains('show');}
+function openModal(title,html,okLabel,onOk){
+  const back=document.getElementById('modalBack');if(!back)return;
+  document.getElementById('modalTitle').textContent=title;
+  document.getElementById('modalMsg').innerHTML=html;
+  const ok=document.getElementById('modalOkBtn');
+  ok.textContent=okLabel;
+  modalOnOk=onOk;
+  ok.onclick=()=>{const f=modalOnOk;closeModal();if(f)f();};
+  back.classList.add('show');
+  modalKeyHandler=e=>{if(e.key==='Escape'){e.preventDefault();closeModal();}};
+  document.addEventListener('keydown',modalKeyHandler);
+  ok.focus();
+}
+function closeModal(){
+  const back=document.getElementById('modalBack');if(back)back.classList.remove('show');
+  if(modalKeyHandler)document.removeEventListener('keydown',modalKeyHandler);
+  modalKeyHandler=null;modalOnOk=null;
+}
+// 실수로 누르면 그 화자 전체가 덮이므로 반드시 확인을 받는다.
+function confirmApplySpeaker(){
+  const slide=currentSlide();if(!slide)return;
+  const n=(DATA[curFolder]||[]).length;
+  openModal('이 화자 전체에 적용',
+    `현재 색보정 값을 <b>${esc(curFolder)}</b> 의 <b>${n}장</b> 전체에 덮어씁니다.<br>`
+    +'각 슬라이드에 따로 맞춰둔 기존 색보정 값은 덮어쓰입니다.<br>'
+    +'<b>되돌리기(Ctrl+Z)는 슬라이드마다 한 장씩</b>이라, 전체를 한 번에 되돌릴 수는 없습니다.<br>'
+    +'<span class="muted">걱정되면 취소하고 먼저 백업을 내보내세요.</span>',
+    '전체에 적용', ()=>applyColorTo('speaker'));
+}
+async function loadClassification(){
+  try{
+    const res=await fetch('../_notes/color_proof/classification.json',{cache:'no-store'});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const j=await res.json();
+    clusterParams=j.cluster_params||null;
+    const map={};(j.slides||[]).forEach(s=>{map[`../${s.speaker}/img/${s.file}`.normalize('NFC')]=s.cluster;});
+    clusterByFile=map;updateColorClusterLabel();
+  }catch(e){
+    clusterParams=null;clusterByFile={};
+    const b=document.getElementById('clusterPresetBtn');if(b){b.disabled=true;b.title='classification.json 로드 실패: '+e.message;}
+    console.warn('classification.json 로드 실패(군집 기능 비활성, 수동 색보정은 정상):',e.message);
+  }
+}
+// 색보정 모드 키보드: b=원본비교 토글 / Esc=스포이드 취소 (입력 포커스 아닐 때)
+document.addEventListener('keydown',e=>{
+  // range 슬라이더는 <input> 이라 tagName 일괄 차단하면 슬라이더를 만진 직후(포커스가 남은 상태)
+  // b·r 이 먹지 않는다. 텍스트 입력류만 브라우저 기본에 양보한다 — Ctrl+Z 핸들러와 같은 규칙.
+  if(isTextEntry(e.target))return;
+  if(modalOpen())return;
+  if(e.metaKey||e.ctrlKey||e.altKey)return;   // ⌘R(새로고침) 등 브라우저 단축키를 가로채지 않는다
+  if(colorMode && e.key.toLowerCase()==='b'){e.preventDefault();toggleBeforeAfter();}
+  if(colorMode && e.key.toLowerCase()==='r'){e.preventDefault();resetColor();}   // 원본 리셋 (Ctrl+Z 로 되돌림)
+  if(eyedropOn && e.key==='Escape'){e.preventDefault();setEyedropper(false);setColorMsg('스포이드 취소됨');}
+});
+// 슬라이더 드래그 = 1스텝: oninput 마다가 아니라 mousedown(드래그 시작) 시점에 변경 전 값을 1회만 저장.
+// #sliderGrid 는 buildColorSliders() 가 innerHTML 로 갈아끼우므로 컨테이너에 위임한다.
+document.getElementById('sliderGrid').addEventListener('mousedown',e=>{
+  const inp=e.target.closest&&e.target.closest('input[type=range][data-k]');
+  if(!inp)return;
+  const d=COLOR_DEFS.find(x=>x.k===inp.dataset.k);
+  pushUndoCur(d?d.label:inp.dataset.k);
+});
+// 스포이드 클릭 대상 = 보정 미리보기(색보정 모드의 유일한 큰 화면)
+document.getElementById('preview').addEventListener('click',e=>{
+  if(!colorMode||!eyedropOn)return;
+  e.preventDefault();
+  eyedropAt(e.clientX,e.clientY);
+});
+
+document.getElementById('showExcludedChk').checked=showExcluded;
+updateClipboardUi();
+buildColorSliders();
+renderUndoUI();
+updateSaveBar();
+setInterval(updateSaveBar,60000);    // "마지막 백업: N분 전" 을 시간 경과에 따라 갱신
+loadClassification();
+if(folderNames.length){
+  renderNav();
+  loadSlide();
+}else{
+  renderNav();
+}
+</script>
+</body>
+</html>

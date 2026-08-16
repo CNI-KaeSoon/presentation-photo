@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.omc/
+.omc.nosync/
+# 작업 산출물 — 사용자마다 다름
+02_작업장/*/
+!02_작업장/slide_tool/
+02_작업장/slide_tool/data.js
+02_작업장/worktree.json
+02_작업장/auto_corners*.json
+01_원본사진/*
+!01_원본사진/여기에_사진을_넣으세요.txt
+03_결과물/*
+!03_결과물/PDF가_여기에_생깁니다.txt
+_env_status.json.tmp
+00_시작/_env_status.json*
+*.pdf
