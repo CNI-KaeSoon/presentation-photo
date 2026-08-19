@@ -66,7 +66,12 @@ body.navcol #navToggle{left:0}
 .ctxMenu button:disabled{color:var(--mut);opacity:.55;cursor:not-allowed}
 .ctxMenu button:disabled:hover{background:none}
 .ctxSep{border-top:1px solid var(--line);margin:4px 0}
-.navBulkRow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line)}
+/* 체크박스 한 줄 + 그 아래 회전 버튼 한 줄(2개 나란히). 같은 줄에 셋을 넣으면 좁은 사이드바에서
+   둘째 버튼만 다음 줄로 밀려 계단 모양이 된다 — 처음부터 아래 줄에 나란히 둔다. */
+.navBulkRow{display:flex;flex-direction:column;gap:7px;align-items:stretch;padding:9px 14px;border-bottom:1px solid var(--line)}
+.navBulkRow>label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--mut)}
+.navRotRow{display:flex;gap:6px;align-items:center}
+.navRotRow .btn{flex:1 1 0;min-width:0;white-space:nowrap;text-align:center}
 .rotGlyph{font-size:14px;line-height:1;vertical-align:-2px}
 .thumb{width:34px;height:22px;object-fit:cover;border:1px solid var(--line);border-radius:3px;background:#f1f5f9}
 .name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -75,9 +80,12 @@ body.navcol #navToggle{left:0}
 .editorGrid{display:grid;grid-template-columns:minmax(360px,1.2fr) minmax(320px,.8fr);gap:16px;align-items:start}
 @media(max-width:1080px){.editorGrid{grid-template-columns:1fr}#main{padding:18px}}
 .stagePanel{overflow:auto}
-.stage{position:relative;display:inline-block;max-width:100%;line-height:0;background:#0f172a}
+/* 상자 크기는 layoutStage() 가 사진 크기·회전에 맞춰 max-width/aspect-ratio 로 넣는다.
+   폭을 100% 로 두어 창 크기 변화는 CSS 가 알아서 따라간다(핸들·비율이 % 기반이라 재계산 불필요). */
+.stage{position:relative;display:block;width:100%;line-height:0;background:#0f172a}
 .stage.degenerate{outline:3px solid var(--bad);outline-offset:3px}
-.stage img{display:block;max-width:100%;height:auto;user-select:none}
+/* 사진은 상자 한가운데에 얹고 90° 단위로 돌린다(transform 은 layoutStage() 가 설정). */
+.stage img{position:absolute;left:50%;top:50%;display:block;width:100%;height:auto;max-width:none;transform-origin:50% 50%;transform:translate(-50%,-50%);user-select:none}
 .quadLine{position:absolute;inset:0;pointer-events:none}
 .cornerHandle{position:absolute;width:15px;height:15px;margin-left:-7.5px;margin-top:-7.5px;background:#fff;border:2px solid var(--acc);border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.24);cursor:grab;z-index:5}
 .cornerHandle:active{cursor:grabbing}
@@ -185,18 +193,20 @@ body.colormode .previewHint{display:none}
   <nav id="nav">
     <h1>슬라이드 스크린샷 보정<br>PDF 내보내기</h1>
     <div class="hint">폴더별 이미지를 검수하고 네 모서리를 드래그해 원근을 보정합니다.</div>
-    <!-- '제외 항목 표시' 와 같은 줄에 일괄 회전 버튼 2개. 목록에서 Shift(범위)·Ctrl/⌘(개별)로
+    <!-- '제외 항목 표시' 아래 줄에 일괄 회전 버튼 2개를 나란히. 목록에서 Shift(범위)·Ctrl/⌘(개별)로
          고른 슬라이드를 한꺼번에 90° 돌린다. 선택이 없으면 비활성 — 사이드바 버튼이 화면 반대편의
          현재 슬라이드를 몰래 돌리는 오작동을 막는다(한 장 회전은 보정 화면 툴바 버튼이 담당). -->
     <div class="navBulkRow">
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--mut);margin-right:auto">
+      <label>
         <input type="checkbox" id="showExcludedChk" checked onchange="toggleShowExcluded(this.checked)">
         제외 항목 표시
       </label>
-      <button id="bulkRotateCwBtn" class="btn sm" onclick="bulkRotateSelected(1)" disabled
-        title="목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 고른 슬라이드를 한꺼번에 시계방향 90° 돌립니다"><span class="rotGlyph">⟳</span>시계 90°</button>
-      <button id="bulkRotateCcwBtn" class="btn sm" onclick="bulkRotateSelected(-1)" disabled
-        title="고른 슬라이드를 한꺼번에 반시계방향 90° 돌립니다"><span class="rotGlyph">⟲</span>반시계 90°</button>
+      <div class="navRotRow">
+        <button id="bulkRotateCwBtn" class="btn sm" onclick="bulkRotateSelected(1)" disabled
+          title="목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 고른 슬라이드를 한꺼번에 시계방향 90° 돌립니다"><span class="rotGlyph">⟳</span>시계 90°</button>
+        <button id="bulkRotateCcwBtn" class="btn sm" onclick="bulkRotateSelected(-1)" disabled
+          title="고른 슬라이드를 한꺼번에 반시계방향 90° 돌립니다"><span class="rotGlyph">⟲</span>반시계 90°</button>
+      </div>
     </div>
     <div id="folderList"></div>
   </nav>
@@ -246,8 +256,8 @@ body.colormode .previewHint{display:none}
           <div class="smallRow" style="margin:8px 0">
             <button id="copyCornersBtn" class="btn sm" onclick="copyCorners()">경계 복사</button>
             <button id="pasteCornersBtn" class="btn sm" onclick="pasteCorners()" disabled>경계 붙여넣기</button>
-            <button id="rotateCwBtn" class="btn sm" onclick="rotateCurrentSlide(1)" title="보정 결과를 시계방향으로 90° 돌립니다 — 카메라를 눕혀 찍어 옆으로 누운 사진 세우기 (원본 파일은 그대로)"><span class="rotGlyph">⟳</span> 시계 90°</button>
-            <button id="rotateCcwBtn" class="btn sm" onclick="rotateCurrentSlide(-1)" title="보정 결과를 반시계방향으로 90° 돌립니다 (원본 파일은 그대로)"><span class="rotGlyph">⟲</span> 반시계 90°</button>
+            <button id="rotateCwBtn" class="btn sm" onclick="rotateCurrentSlide(1)" title="원본 화면과 보정 결과를 함께 시계방향으로 90° 돌립니다 — 카메라를 눕혀 찍어 옆으로 누운 사진 세우기 (원본 파일은 그대로)"><span class="rotGlyph">⟳</span> 시계 90°</button>
+            <button id="rotateCcwBtn" class="btn sm" onclick="rotateCurrentSlide(-1)" title="원본 화면과 보정 결과를 함께 반시계방향으로 90° 돌립니다 (원본 파일은 그대로)"><span class="rotGlyph">⟲</span> 반시계 90°</button>
             <span id="cornerClipboardStatus" class="muted"></span>
           </div>
           <div id="stage" class="stage">
@@ -398,6 +408,11 @@ let sourcePixels=null;
 let sourceCanvas=document.createElement('canvas');
 let sourceCtx=sourceCanvas.getContext('2d',{willReadFrequently:true});
 let renderQueued=false;
+// 원본 화면(스테이지)의 표시 회전 — 시계방향 90° 몇 번인지(0~3). 따로 저장하지 않고 **코너 배열에서
+// 파생**한다: 회전은 코너 순환(rotateCorners)으로만 기록되고 그 순환이 곧 "결과가 어느 방향으로 서는가"
+// 이므로, 같은 각도로 원본 화면도 돌리면 두 패널 방향이 항상 일치한다(미리보기만 돌던 문제 해소).
+// 파생이라 백업 JSON 스키마·구 백업 호환이 그대로다.
+let stageRot=0;
 
 function readStore(key,fallback){try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback));}catch{return fallback;}}
 // ⚠️ localStorage 는 용량 한계(보통 5~10MB)가 있고, 초과 시 setItem 이 throw 한다.
@@ -597,6 +612,7 @@ function pasteCorners(){
   ratioStore[slide.file]=cornerClipboard.ratio;
   writeStore(LS_RATIOS,ratioStore);
   updateRatioButtons();
+  syncStageRot();layoutStage();
   positionHandles();
   scheduleRender();
   updateClipboardUi();
@@ -626,6 +642,7 @@ function rotateCorners(corners,dir){
 function rotateCurrentSlide(dir){
   const slide=currentSlide();if(!slide)return;
   setCorners(slide.file,rotateCorners(getCorners(slide.file),dir));
+  syncStageRot();layoutStage();   // 원본 화면도 같은 각도로 — 두 패널이 함께 돈다
   positionHandles();scheduleRender();
 }
 
@@ -644,7 +661,7 @@ function bulkRotateIndices(folder,indices,dir){
   });
   if(!n)return 0;
   writeStore(LS_CORNERS,cornersStore);
-  if(touchesCurrent){positionHandles();scheduleRender();}
+  if(touchesCurrent){syncStageRot();layoutStage();positionHandles();scheduleRender();}
   return n;
 }
 
@@ -818,6 +835,7 @@ function loadSlide(){
     sourceCtx.drawImage(img,0,0);
     sourcePixels=sourceCtx.getImageData(0,0,sourceCanvas.width,sourceCanvas.height);
     histSrcCache={key:null,data:null};   // 새 원본 픽셀 → 히스토그램 축소버퍼 캐시 무효화
+    syncStageRot();layoutStage();        // naturalWidth 가 잡힌 뒤라야 회전각·상자 비율을 계산할 수 있다
     positionHandles();
     scheduleRender();
   };
@@ -998,6 +1016,7 @@ function resetCorners(){
   const slide=currentSlide();if(!slide)return;
   delete cornersStore[slide.file];
   writeStore(LS_CORNERS,cornersStore);
+  syncStageRot();layoutStage();
   positionHandles();scheduleRender();
 }
 
@@ -1040,14 +1059,50 @@ document.addEventListener('keydown',e=>{
   if(e.key==='ArrowUp'){e.preventDefault();moveSlide(-1);}
 });
 
+// ---- 원본 화면 회전 (표시 전용 — 저장 코너는 늘 원본 사진 좌표계 그대로다) ----
+// 이미지 정규좌표 ↔ 화면(회전된 스테이지) 정규좌표. k = 시계방향 90° 회전 횟수(0~3).
+function toDisp(p,k){const x=p[0],y=p[1];return k===1?[1-y,x]:k===2?[1-x,1-y]:k===3?[y,1-x]:[x,y];}
+function fromDisp(p,k){const x=p[0],y=p[1];return k===1?[y,1-x]:k===2?[1-x,1-y]:k===3?[1-y,x]:[x,y];}
+// 이동량은 평행이동 성분 없이 선형부만 돌린다(변 핸들 드래그용).
+function dispDeltaToImg(dx,dy,k){return k===1?[dy,-dx]:k===2?[-dx,-dy]:k===3?[-dy,dx]:[dx,dy];}
+
+// 코너 배열에서 화면 회전각을 되찾는다 — TL→TR 변이 화면에서 오른쪽을 향하게 만드는 90° 배수.
+// 정규좌표는 가로·세로 배율이 달라 각도가 왜곡되므로 픽셀 좌표로 환산해서 잰다.
+function deriveStageRot(corners,w,h){
+  const dx=(corners[1][0]-corners[0][0])*(w||1),dy=(corners[1][1]-corners[0][1])*(h||1);
+  if(!dx&&!dy)return 0;
+  return ((Math.round(-Math.atan2(dy,dx)*180/Math.PI/90)%4)+4)%4;
+}
+function syncStageRot(){
+  const slide=currentSlide(),img=document.getElementById('sourceImg');
+  stageRot=(slide&&img.naturalWidth)?deriveStageRot(getCorners(slide.file),img.naturalWidth,img.naturalHeight):0;
+}
+
+// 상자 크기는 CSS(max-width + aspect-ratio)에 맡기고, 사진만 상자 안에서 돌린다.
+// 홀수 회전은 90° 돌린 사진의 가로가 상자 세로 자리에 들어가므로 W/H 만큼 확대해야 딱 맞는다.
+// 나머지가 % 기반이라 창 크기·목록 접기에는 CSS 가 알아서 따라간다.
+function layoutStage(){
+  const img=document.getElementById('sourceImg'),stage=document.getElementById('stage');
+  const W=img.naturalWidth,H=img.naturalHeight;
+  if(!W||!H)return;
+  const odd=stageRot%2===1,boxW=odd?H:W,boxH=odd?W:H;
+  stage.style.maxWidth=boxW+'px';
+  stage.style.aspectRatio=boxW+' / '+boxH;
+  img.style.transform=`translate(-50%,-50%) rotate(${stageRot*90}deg)`+(odd?` scale(${W/H})`:'');
+  stage.style.height='';
+  if(!stage.clientHeight)stage.style.height=Math.round(stage.clientWidth*boxH/boxW)+'px';  // aspect-ratio 미지원 폴백
+}
+
+// 핸들·사각형이 올라가는 판 = 회전된 스테이지 상자
 function imageRect(){
-  const img=document.getElementById('sourceImg');
-  return {w:img.clientWidth,h:img.clientHeight};
+  const stage=document.getElementById('stage');
+  return {w:stage.clientWidth,h:stage.clientHeight};
 }
 
 function positionHandles(){
   const slide=currentSlide();if(!slide)return;
-  const corners=getCorners(slide.file);
+  // 화면 회전만큼 돌린 좌표에 얹는다 — 사진과 지정한 모서리가 늘 같이 돈다.
+  const corners=getCorners(slide.file).map(p=>toDisp(p,stageRot));
   document.querySelectorAll('.cornerHandle').forEach(h=>{
     const p=corners[+h.dataset.idx];
     h.style.left=(p[0]*100)+'%';
@@ -1114,7 +1169,7 @@ document.querySelectorAll('.cornerHandle').forEach(handle=>{
     const move=ev=>{
       const x=Math.max(0,Math.min(1,(ev.clientX-stage.left)/stage.width));
       const y=Math.max(0,Math.min(1,(ev.clientY-stage.top)/stage.height));
-      corners[idx]=[x,y];
+      corners[idx]=fromDisp([x,y],stageRot);   // 화면에서 집은 점을 원본 사진 좌표로 되돌려 저장
       setCorners(slide.file,corners);
       positionHandles();
       scheduleRender();
@@ -1141,7 +1196,7 @@ document.querySelectorAll('.edgeHandle').forEach(handle=>{
     const move=ev=>{
       const x=Math.max(0,Math.min(1,(ev.clientX-stage.left)/stage.width));
       const y=Math.max(0,Math.min(1,(ev.clientY-stage.top)/stage.height));
-      const dx=x-startMouse[0],dy=y-startMouse[1];
+      const [dx,dy]=dispDeltaToImg(x-startMouse[0],y-startMouse[1],stageRot);
       corners[a]=[Math.max(0,Math.min(1,startA[0]+dx)),Math.max(0,Math.min(1,startA[1]+dy))];
       corners[b]=[Math.max(0,Math.min(1,startB[0]+dx)),Math.max(0,Math.min(1,startB[1]+dy))];
       setCorners(slide.file,corners);
@@ -1154,7 +1209,7 @@ document.querySelectorAll('.edgeHandle').forEach(handle=>{
   });
 });
 
-window.addEventListener('resize',()=>{positionHandles();scheduleRender();});
+window.addEventListener('resize',()=>{layoutStage();positionHandles();scheduleRender();});
 
 function scheduleRender(){
   if(renderQueued)return;
@@ -1521,6 +1576,7 @@ function toggleColorMode(){
   document.body.classList.toggle('colormode',colorMode);
   document.getElementById('colorModeBtn').classList.toggle('on',colorMode);
   if(!colorMode){setEyedropper(false);colorShowOriginal=false;const ba=document.getElementById('beforeAfterBtn');if(ba){ba.classList.remove('on');ba.textContent='원본 비교';}}
+  if(!colorMode){layoutStage();positionHandles();}   // 숨겨진 동안 잰 크기(0)로 남은 상자·사각형 되살리기
   refreshColorUi();scheduleRender();
 }
 function toggleBeforeAfter(){

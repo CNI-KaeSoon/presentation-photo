@@ -15,6 +15,11 @@ PDF 가 같은 코너 규약을 쓰기 때문에 이 순환 하나로 양쪽이 
 - R5 픽셀 완전 일치: 정사각 출력에서 warp(회전코너) == rot90(warp(원본코너)) 가 성립하는지.
        export_pdf 의 dst 규약(W-1 이 아니라 W)에서 오는 기존 반픽셀 어긋남을 배제하기 위해
        대칭 dst 로 같은 변환을 재구성해 비교한다 — 순환식 자체의 정확도만 본다.
+- R6 원본 화면(표시) 회전: 미리보기만 돌고 '원본 모서리 지정' 화면은 그대로여서 작업이 불편했던
+       문제의 회귀 가드. 표시 회전각을 코너 배열에서 파생(deriveStageRot)하고 화면↔이미지 좌표를
+       toDisp/fromDisp 로 오가는데, index.html 의 이 네 함수를 node 로 그대로 실행해
+       ① 좌표 왕복 항등 ② 파생 회전각 = 실제 회전 횟수 ③ 회전해도 핸들이 사진을 따라가
+       화면 자리를 지키는지 ④ 변 드래그 이동량 변환의 선형부 일치를 확인한다.
 
 Usage: python3 05_스크립트/test_rotate_parity.py    (node 필요, 없으면 R1 만 건너뜀)
 """
@@ -45,6 +50,13 @@ for _stream in (sys.stdout, sys.stderr):
 
 INDEX = os.path.join(os.path.dirname(HERE), "02_작업장", "slide_tool", "index.html")
 FN_RE = re.compile(r"function rotateCorners\(corners,dir\)\{.*?\n\}", re.S)
+# R6 이 쓰는 표시-회전 헬퍼들. toDisp/fromDisp/dispDeltaToImg 는 한 줄, deriveStageRot 은 여러 줄이다.
+DISP_FN_RES = [
+    re.compile(r"function toDisp\(p,k\)\{[^\n]*\}"),
+    re.compile(r"function fromDisp\(p,k\)\{[^\n]*\}"),
+    re.compile(r"function dispDeltaToImg\(dx,dy,k\)\{[^\n]*\}"),
+    re.compile(r"function deriveStageRot\(corners,w,h\)\{.*?\n\}", re.S),
+]
 
 failures = []
 
@@ -256,12 +268,111 @@ def r5_pixel_exact():
                       f"(상한 {int(round(limit * delta.size))}픽셀·1LSB)")
 
 
+# ---- R6. 원본 화면(표시) 회전 — index.html 의 좌표 변환·회전각 파생을 node 로 검증 ----------
+def r6_stage_rotation():
+    from shutil import which
+    if which("node") is None:
+        print("[SKIP] node 없음 — R6(원본 화면 회전)을 건너뜁니다.")
+        return
+    try:
+        source = open(INDEX, encoding="utf-8").read()
+    except OSError as exc:
+        check(False, "R6 index.html 읽기", str(exc))
+        return
+    helpers = []
+    for pattern in DISP_FN_RES:
+        found = pattern.search(source)
+        if not found:
+            check(False, "R6 표시-회전 함수 추출", f"index.html 에서 {pattern.pattern[:28]}… 를 찾지 못했습니다")
+            return
+        helpers.append(found.group(0))
+    rotate_fn = FN_RE.search(source)
+    if not rotate_fn:
+        check(False, "R6 rotateCorners 추출", "index.html 에서 함수를 찾지 못했습니다")
+        return
+
+    probe = r"""
+const fail=[];
+const near=(a,b)=>Math.abs(a-b)<1e-9;
+// (a) 화면↔이미지 좌표 왕복 항등
+for(let k=0;k<4;k++)for(let i=0;i<200;i++){
+  const p=[(i*7%100)/100,(i*13%100)/100];
+  const back=fromDisp(toDisp(p,k),k);
+  if(!near(back[0],p[0])||!near(back[1],p[1]))fail.push(`왕복 k=${k} ${p}→${back}`);
+}
+// (b) 파생 회전각 = 실제 회전 횟수 (이미지 가로세로비 3종)
+const quad=[[0.08,0.06],[0.93,0.10],[0.05,0.92],[0.95,0.88]];
+for(const [w,h] of [[1000,1000],[1920,1080],[1080,1920]]){
+  for(const dir of [1,-1]){
+    let c=quad;
+    for(let n=0;n<=4;n++){
+      const want=((dir>0?n:-n)%4+4)%4;
+      const got=deriveStageRot(c,w,h);
+      if(got!==want)fail.push(`파생각 ${w}x${h} dir=${dir} n=${n} → ${got}(기대 ${want})`);
+      c=rotateCorners(c,dir);
+    }
+  }
+}
+// (c) 회전하면 사진과 핸들이 함께 돈다
+//     ① 사진: 같은 물리 점의 화면 위치가 정확히 시계 90°(R) 만큼 이동 — 표시 회전이 한 번에 한 칸.
+//     ② 핸들: 여백이 비대칭인 직사각 쿼드에서도 nw/ne/sw/se 핸들이 화면 사분면 제자리를 지킨다
+//        (원본 화면이 안 돌면 여기서 즉시 어긋난다 — 이번 회귀의 핵심 가드).
+const rect=[[0.1,0.2],[0.9,0.2],[0.1,0.8],[0.9,0.8]];
+const R=s=>[1-s[1],s[0]];
+const quadrant=s=>(s[1]<0.5?"N":"S")+(s[0]<0.5?"W":"E");
+const wantQ=["NW","NE","SW","SE"];
+for(const [w,h] of [[600,600],[1920,1080]]){
+  let cur=rect,k=deriveStageRot(cur,w,h);
+  if(k!==0)fail.push(`기준 파생각 ${w}x${h} → ${k}(기대 0)`);
+  for(let n=0;n<4;n++){
+    const before=rect.map(p=>toDisp(p,k));
+    cur=rotateCorners(cur,1);k=deriveStageRot(cur,w,h);
+    const after=rect.map(p=>toDisp(p,k));
+    after.forEach((p,i)=>{
+      const want=R(before[i]);
+      if(!near(p[0],want[0])||!near(p[1],want[1]))
+        fail.push(`사진 회전 ${w}x${h} n=${n+1} pt=${i} ${p}≠${want}`);
+    });
+    cur.map(p=>toDisp(p,k)).forEach((p,i)=>{
+      if(quadrant(p)!==wantQ[i])fail.push(`핸들 사분면 ${w}x${h} n=${n+1} idx=${i} ${quadrant(p)}≠${wantQ[i]}`);
+    });
+  }
+  if(k!==0)fail.push(`4회전 복귀 ${w}x${h} → ${k}(기대 0)`);
+}
+// (d) 변 드래그 이동량 = 두 점 차의 선형부
+for(let k=0;k<4;k++){
+  const p=[0.31,0.42],d=[0.17,-0.09];
+  const want=[fromDisp([p[0]+d[0],p[1]+d[1]],k)[0]-fromDisp(p,k)[0],
+              fromDisp([p[0]+d[0],p[1]+d[1]],k)[1]-fromDisp(p,k)[1]];
+  const got=dispDeltaToImg(d[0],d[1],k);
+  if(!near(got[0],want[0])||!near(got[1],want[1]))fail.push(`델타 k=${k} ${got}≠${want}`);
+}
+process.stdout.write(JSON.stringify(fail));
+"""
+    script = "\n".join(helpers + [rotate_fn.group(0), probe])
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as handle:
+        handle.write(script)
+        path = handle.name
+    try:
+        run = subprocess.run([which("node"), path], capture_output=True, text=True,
+                             encoding="utf-8", check=False)
+    finally:
+        os.unlink(path)
+    if run.returncode != 0:
+        check(False, "R6 node 실행", (run.stderr or run.stdout).strip()[:300])
+        return
+    bad = json.loads(run.stdout)
+    check(not bad, "R6 원본 화면 회전 (좌표 왕복·파생각·핸들 자리·델타)",
+          "불일치 없음" if not bad else f"{len(bad)}건 — " + " / ".join(bad[:4]))
+
+
 def main() -> int:
     r1_js_matches_python()
     r2_identity()
     r3_projective_identity()
     r4_render_layout()
     r5_pixel_exact()
+    r6_stage_rotation()
     print()
     if failures:
         print(f"ROTATE PARITY: FAIL ({len(failures)}건) — " + " / ".join(failures[:5]))
