@@ -65,6 +65,9 @@ body.navcol #navToggle{left:0}
 .ctxMenu button:hover{background:#f1f5f9}
 .ctxMenu button:disabled{color:var(--mut);opacity:.55;cursor:not-allowed}
 .ctxMenu button:disabled:hover{background:none}
+.ctxSep{border-top:1px solid var(--line);margin:4px 0}
+.navBulkRow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line)}
+.rotGlyph{font-size:14px;line-height:1;vertical-align:-2px}
 .thumb{width:34px;height:22px;object-fit:cover;border:1px solid var(--line);border-radius:3px;background:#f1f5f9}
 .name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .state{font-size:10px;display:flex;gap:3px}
@@ -182,10 +185,19 @@ body.colormode .previewHint{display:none}
   <nav id="nav">
     <h1>슬라이드 스크린샷 보정<br>PDF 내보내기</h1>
     <div class="hint">폴더별 이미지를 검수하고 네 모서리를 드래그해 원근을 보정합니다.</div>
-    <label class="hint" style="display:flex;align-items:center;gap:6px;cursor:pointer">
-      <input type="checkbox" id="showExcludedChk" checked onchange="toggleShowExcluded(this.checked)">
-      제외 항목 표시
-    </label>
+    <!-- '제외 항목 표시' 와 같은 줄에 일괄 회전 버튼 2개. 목록에서 Shift(범위)·Ctrl/⌘(개별)로
+         고른 슬라이드를 한꺼번에 90° 돌린다. 선택이 없으면 비활성 — 사이드바 버튼이 화면 반대편의
+         현재 슬라이드를 몰래 돌리는 오작동을 막는다(한 장 회전은 보정 화면 툴바 버튼이 담당). -->
+    <div class="navBulkRow">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--mut);margin-right:auto">
+        <input type="checkbox" id="showExcludedChk" checked onchange="toggleShowExcluded(this.checked)">
+        제외 항목 표시
+      </label>
+      <button id="bulkRotateCwBtn" class="btn sm" onclick="bulkRotateSelected(1)" disabled
+        title="목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 고른 슬라이드를 한꺼번에 시계방향 90° 돌립니다"><span class="rotGlyph">⟳</span>시계 90°</button>
+      <button id="bulkRotateCcwBtn" class="btn sm" onclick="bulkRotateSelected(-1)" disabled
+        title="고른 슬라이드를 한꺼번에 반시계방향 90° 돌립니다"><span class="rotGlyph">⟲</span>반시계 90°</button>
+    </div>
     <div id="folderList"></div>
   </nav>
   <main id="main">
@@ -234,6 +246,8 @@ body.colormode .previewHint{display:none}
           <div class="smallRow" style="margin:8px 0">
             <button id="copyCornersBtn" class="btn sm" onclick="copyCorners()">경계 복사</button>
             <button id="pasteCornersBtn" class="btn sm" onclick="pasteCorners()" disabled>경계 붙여넣기</button>
+            <button id="rotateCwBtn" class="btn sm" onclick="rotateCurrentSlide(1)" title="보정 결과를 시계방향으로 90° 돌립니다 — 카메라를 눕혀 찍어 옆으로 누운 사진 세우기 (원본 파일은 그대로)"><span class="rotGlyph">⟳</span> 시계 90°</button>
+            <button id="rotateCcwBtn" class="btn sm" onclick="rotateCurrentSlide(-1)" title="보정 결과를 반시계방향으로 90° 돌립니다 (원본 파일은 그대로)"><span class="rotGlyph">⟲</span> 반시계 90°</button>
             <span id="cornerClipboardStatus" class="muted"></span>
           </div>
           <div id="stage" class="stage">
@@ -593,6 +607,66 @@ function updateClipboardUi(){
   document.getElementById('cornerClipboardStatus').textContent=cornerClipboard?'복사됨 · 붙여넣기 가능':'';
 }
 
+// ---- 90° 회전 (카메라를 눕혀 찍은 사진 세우기) ----
+// 코너 배열 순서는 [TL,TR,BL,BR] (핸들 data-idx 0=nw,1=ne,2=sw,3=se · DEFAULT_CORNERS 와 동일)이고,
+// 이 규약은 export_pdf.py 의 `tl, tr, bl, br = ...` 와 같다. 따라서 **배열 순서만 순환**시키면
+// 브라우저 미리보기와 최종 PDF 가 함께 돌아간다 — 파이썬은 무수정.
+//   시계 90°  : 이미지를 시계로 돌리면 BL→TL, TL→TR, TR→BR, BR→BL 이므로 결과 TL 자리의 원본 점은 지금 BL.
+//               → [BL,TL,BR,TR] = [c2,c0,c3,c1]
+//   반시계 90°: 같은 논리로 [TR,BR,TL,BL] = [c1,c3,c0,c2]
+// 출력 비율(ratioStore)은 건드리지 않는다 — 16:9 슬라이드를 세우는 것이므로 회전 후에도 16:9 가 정답이고,
+// '자유' 비율은 destSizeFor 가 코너 거리로 w/h 를 계산하므로 순환만으로 가로·세로가 자동으로 뒤바뀐다.
+// 되돌리기는 undoStacks(색보정 전용)에 넣지 않는다 — 순수 순환이라 반대 방향 버튼이 정확한 역연산이다
+// (저장값은 이미 toFixed(5) 를 통과했거나 0/1 이라 재반올림 손실이 없고, 4회 회전은 항등).
+function rotateCorners(corners,dir){
+  const c=corners;
+  return dir>0?[c[2],c[0],c[3],c[1]]:[c[1],c[3],c[0],c[2]];
+}
+
+function rotateCurrentSlide(dir){
+  const slide=currentSlide();if(!slide)return;
+  setCorners(slide.file,rotateCorners(getCorners(slide.file),dir));
+  positionHandles();scheduleRender();
+}
+
+// 일괄 회전. ⚠️ writeStore 는 매 호출마다 저장소 전체를 직렬화하고 quota 검사를 하므로
+// 장수만큼 부르면 안 된다 — cornersStore 를 직접 갱신하고 마지막에 한 번만 저장한다.
+function bulkRotateIndices(folder,indices,dir){
+  const slides=DATA[folder]||[];
+  const cur=currentSlide();
+  let n=0,touchesCurrent=false;
+  (indices||[]).forEach(i=>{
+    const slide=slides[i];if(!slide)return;
+    const rotated=rotateCorners(getCorners(slide.file),dir);
+    cornersStore[slide.file]=rotated.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]);
+    n++;
+    if(cur&&cur.file===slide.file)touchesCurrent=true;
+  });
+  if(!n)return 0;
+  writeStore(LS_CORNERS,cornersStore);
+  if(touchesCurrent){positionHandles();scheduleRender();}
+  return n;
+}
+
+function bulkRotateSelected(dir){
+  if(!curFolder||!selectedIdx.size)return;
+  bulkRotateIndices(curFolder,Array.from(selectedIdx),dir);
+}
+
+// 사이드바 일괄 버튼은 #folderList 밖(정적 nav 영역)에 있어 renderNav 재렌더로 갱신되지 않는다.
+// 선택 변경 경로가 모두 renderNav 를 지나므로 그 끝에서 이 함수를 한 번 부른다.
+function updateBulkRotateUi(){
+  const n=selectedIdx.size;
+  ['bulkRotateCwBtn','bulkRotateCcwBtn'].forEach(id=>{
+    const btn=document.getElementById(id);if(!btn)return;
+    btn.disabled=n===0;
+    // 라벨은 고정 — 개수를 라벨에 넣으면 폭이 흔들려 '제외 항목 표시' 와 한 줄에 안 들어간다.
+    // 대상 장수는 툴팁과 바로 아래 '선택 N개 제외' 줄이 알려준다.
+    btn.title=(n?`선택한 ${n}장을 한꺼번에 `:'목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 슬라이드를 고른 뒤 ')
+      +(id==='bulkRotateCwBtn'?'시계방향':'반시계방향')+' 90° 돌립니다';
+  });
+}
+
 function toggleNav(){const c=document.body.classList.toggle('navcol');document.getElementById('navToggle').textContent=c?'▶':'◀';}
 function toggleShowExcluded(value){showExcluded=value;writeStore(LS_SHOW_EXCLUDED,showExcluded);renderNav();}
 
@@ -604,6 +678,10 @@ function moveSlideToFolder(file,targetFolder){
   if(targetFolder===origFolderOf(file))delete moveStore[file];else moveStore[file]=targetFolder;
   saveMoves();
   DATA=buildData();
+  // 그룹이 바뀌면 목록 인덱스가 재배치된다. 선택을 그대로 두면 같은 번호가 **다른 슬라이드**를
+  // 가리켜 이후 일괄 동작(제외·회전)이 엉뚱한 장에 걸린다. 우클릭 이동 경로는 대상 파일 목록을
+  // 이 함수 호출 전에 이미 확보하므로 여기서 비워도 안전하다.
+  selectedIdx.clear();lastClickedIdx=null;
   if(!(DATA[curFolder]||[]).length)curFolder=folderNames.find(f=>DATA[f].length)||curFolder;
   curIndex=Math.max(0,Math.min(curIndex,(DATA[curFolder]||[]).length-1));
   renderNav();loadSlide();
@@ -713,6 +791,7 @@ function renderNav(){
     box.addEventListener('dragleave',()=>box.classList.remove('dragover'));
     box.addEventListener('drop',e=>{e.preventDefault();box.classList.remove('dragover');const file=e.dataTransfer.getData('text/plain');if(file&&box.dataset.folder)moveSlideToFolder(file,box.dataset.folder);});
   });
+  updateBulkRotateUi();   // 일괄 회전 버튼은 이 innerHTML 재렌더 범위 밖이라 따로 갱신한다
 }
 
 function selectSlide(folder,index){
@@ -803,13 +882,22 @@ function openCtxMenu(x,y,folder,index){
   const fi=folderNames.indexOf(folder);
   const prevF=folderNames[fi-1],nextF=folderNames[fi+1];
   const moveLabel=selected?`선택 ${targetIndices.length}개 `:'';
+  // ⚠️ 회전 항목은 반드시 data-rot 로 — 아래 `querySelector('[data-action]')` 는 단수 셀렉터라
+  //    회전 버튼에도 data-action 을 달면 제외 핸들러가 엉뚱한 버튼에 붙는다.
   menu.innerHTML=`<button class="ctxMenuBtn" data-action="${action}">${label}</button>`
+    +`<button class="ctxMenuBtn" data-rot="1">${moveLabel}⟳ 시계 90° 회전</button>`
+    +`<button class="ctxMenuBtn" data-rot="-1">${moveLabel}⟲ 반시계 90° 회전</button>`
+    +((prevF||nextF)?'<div class="ctxSep"></div>':'')
     +(prevF?`<button class="ctxMenuBtn" data-move="-1">◀ ${moveLabel}이전 화자로 (${esc(prevF)})</button>`:'')
     +(nextF?`<button class="ctxMenuBtn" data-move="1">${moveLabel}다음 화자로 ▶ (${esc(nextF)})</button>`:'');
   menu.querySelector('[data-action]').onclick=()=>{
     bulkSetExcluded(folder,targetIndices,value);
     closeCtxMenu();
   };
+  menu.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>{
+    bulkRotateIndices(folder,targetIndices,+b.dataset.rot);   // 선택은 유지 — 기존 제외 동작과 같다
+    closeCtxMenu();
+  });
   menu.querySelectorAll('[data-move]').forEach(b=>b.onclick=()=>{
     const delta=+b.dataset.move;const tgt=folderNames[fi+delta];
     const files=targetIndices.map(i=>(DATA[folder]||[])[i]).filter(Boolean).map(s=>s.file);
