@@ -4,149 +4,242 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <link rel="icon" href="data:,">
-<title>슬라이드 스크린샷 보정 · PDF 내보내기</title>
+<title>슬라이드 사진 보정</title>
 <script src="data.js"></script>
 <script src="heartbeat.js" defer></script>
 <script src="workflow.js" defer></script>
 <style>
+/* ===== 디자인 토큰 (시안 A 클린 블루) =====
+   색·간격·글자·둥글기·그림자는 여기 값만 쓴다. 이 :root 밖에는 색 코드를 두지 않는다.
+   다크 모드는 나중에 이 :root 값만 덮어쓰면 된다(캔버스 그림도 tokenColor() 로 이 값을 읽는다). */
 :root{
-  --bg:#f7f9fc;--panel:#ffffff;--panel2:#f1f5f9;--ink:#172033;--mut:#64748b;
-  --acc:#2563eb;--acc2:#1e40af;--line:#d9e2ef;--warn:#b45309;--bad:#b91c1c;
-  --ok:#15803d;--shadow:0 1px 3px rgba(15,23,42,.08);
+  --font:"Pretendard Variable","Pretendard",-apple-system,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+  /* 바탕·글·테두리 */
+  --bg:#f3f6fb;--surface:#ffffff;--surface-2:#f7f9fc;--surface-3:#e9eef6;
+  --border:#e2e8f1;--border-strong:#c9d3e2;
+  --text:#182238;--text-2:#44526b;--muted:#7a879c;
+  /* 의미 색: 진한 색 + 연한 배경 */
+  --primary:#2f6bdb;--primary-fg:#ffffff;--primary-soft:#e6eefc;--primary-text:#2359b8;
+  --danger:#cf3b3b;--danger-soft:#fdecec;
+  --warn:#b26a0b;--warn-soft:#fff3dc;
+  --success:#1f8f5f;--success-soft:#e2f5ec;
+  /* 화면 요소 */
+  --photo-bg:#e8edf5;--stage-bg:#182238;--toast-bg:#182238;--toast-fg:#eef2fa;
+  --overlay:rgba(24,34,56,.45);
+  /* 간격 4단계 · 글자 4단계 · 둥글기 3단계(+알약) · 그림자 */
+  --s1:6px;--s2:12px;--s3:20px;--s4:32px;
+  --f1:12px;--f2:14.5px;--f3:16.5px;--f4:22px;
+  --r1:6px;--r2:10px;--r3:16px;--r-pill:999px;
+  --shadow-card:0 1px 2px rgba(24,34,56,.05),0 8px 24px -8px rgba(24,34,56,.12);
+  --shadow-pop:0 4px 16px rgba(24,34,56,.14);
+  --shadow-modal:0 18px 50px rgba(24,34,56,.28);
+  --shadow-photo:0 6px 24px rgba(24,34,56,.25);
+  /* 크기 */
+  --btn-h:36px;--btn-h-sm:30px;--nav-w:312px;
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+[hidden]{display:none!important}
+body{margin:0;font:400 var(--f2)/1.5 var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+h1,h2,h3{margin:0}
+.ic{width:1.15em;height:1.15em;flex:none;vertical-align:-.18em}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+.muted{color:var(--muted);font-size:var(--f1)}
+kbd{font:500 var(--f1)/1 var(--font);background:var(--surface-2);border:1px solid var(--border-strong);border-radius:calc(var(--r1) - 2px);padding:2px 5px;color:var(--muted)}
+
+/* ---- 버튼: .btn(=secondary) + primary / danger / ghost, 크기 sm, 켜짐 = aria-pressed ---- */
+.btn{--b-bg:var(--surface);--b-fg:var(--text);--b-bd:var(--border-strong);--b-hover:var(--surface-3);
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s1);height:var(--btn-h);padding:0 var(--s3);
+  background:var(--b-bg);color:var(--b-fg);border:1px solid var(--b-bd);border-radius:var(--r2);
+  font-size:var(--f2);font-weight:600;line-height:1;white-space:nowrap;cursor:pointer}
+.btn:hover:not(:disabled){background:var(--b-hover)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:focus-visible,.seg button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.btn.primary{--b-bg:var(--primary);--b-fg:var(--primary-fg);--b-bd:var(--primary);--b-hover:color-mix(in srgb,var(--primary) 88%,var(--text))}
+.btn.danger{--b-fg:var(--danger);--b-bd:color-mix(in srgb,var(--danger) 50%,var(--border));--b-hover:var(--danger-soft)}
+.btn.ghost{--b-bg:transparent;--b-bd:transparent;--b-fg:var(--text-2)}
+.btn.sm{height:var(--btn-h-sm);padding:0 var(--s2);font-size:var(--f1)}
+.btn.icon{width:var(--btn-h);padding:0}
+.btn.sm.icon{width:var(--btn-h-sm)}
+.btn[aria-pressed=true]{--b-bg:var(--primary-soft);--b-fg:var(--primary-text);--b-bd:var(--primary);--b-hover:var(--primary-soft)}
+.btn.primary[aria-pressed=true]{--b-bg:var(--success-soft);--b-fg:var(--success);--b-bd:var(--success);--b-hover:var(--success-soft)}
+.btn.danger[aria-pressed=true]{--b-bg:var(--danger-soft);--b-fg:var(--danger);--b-bd:var(--danger);--b-hover:var(--danger-soft)}
+.btn.ghost[aria-pressed=true]{--b-bd:transparent}
+/* 세그먼트 컨트롤(둘 중 하나 고르기 · 탭) */
+.seg{display:inline-flex;gap:2px;padding:2px;background:var(--surface-3);border-radius:var(--r2)}
+.seg button{height:calc(var(--btn-h) - 6px);padding:0 var(--s3);border:0;border-radius:calc(var(--r2) - 2px);background:transparent;color:var(--text-2);font-size:var(--f2);font-weight:600;cursor:pointer}
+.seg button:hover:not(:disabled){color:var(--text)}
+.seg button[aria-selected=true],.seg button[aria-checked=true]{background:var(--surface);color:var(--text);box-shadow:var(--shadow-pop)}
+.seg.sm button{height:calc(var(--btn-h-sm) - 4px);padding:0 var(--s2);font-size:var(--f1)}
+
+/* ---- 배지 하나: 사진 상태(todo·auto·review·done·ex·deck) · 단계 · 보조 표시 ---- */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:1px var(--s1);border:1px solid transparent;border-radius:var(--r-pill);
+  background:var(--surface-3);color:var(--text-2);font-size:var(--f1);font-weight:700;line-height:1.5;white-space:nowrap;flex:none}
+.badge.todo{background:transparent;color:var(--muted);border:1px dashed var(--border-strong)}
+.badge.auto{background:var(--primary-soft);color:var(--primary-text)}
+.badge.review{background:var(--warn-soft);color:var(--warn)}
+.badge.done{background:var(--success-soft);color:var(--success)}
+.badge.ex{background:var(--surface-3);color:var(--muted)}
+.badge.deck{background:transparent;color:var(--muted);border-color:var(--border-strong)}
+.badge.step{padding:3px var(--s2);font-size:var(--f2);font-weight:600}
+
+/* ---- 알림: 토스트(짧은 결과) · 배너(정보/경고/오류 띠) ---- */
+.toast{position:fixed;left:50%;bottom:var(--s3);transform:translateX(-50%) translateY(12px);z-index:80;
+  max-width:min(88vw,640px);padding:var(--s2) var(--s3);background:var(--toast-bg);color:var(--toast-fg);border-radius:var(--r3);box-shadow:var(--shadow-pop);
+  font-size:var(--f2);font-weight:500;text-align:center;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.banner{margin-top:var(--s2);padding:var(--s2);border:1px solid var(--border);border-left-width:4px;border-radius:var(--r2);background:var(--surface-2);color:var(--text);font-size:var(--f2)}
+.banner.info{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 30%,transparent);border-left-color:var(--primary)}
+.banner.ok{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 30%,transparent);border-left-color:var(--success)}
+.banner.warn{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 30%,transparent);border-left-color:var(--warn)}
+.banner.error{background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 30%,transparent);border-left-color:var(--danger)}
+/* localStorage 저장 실패 = 작업이 날아갈 수 있는 상황 → 화면 맨 위에 붙여 조용히 지나가지 않게 한다 */
+.banner.compact{margin-top:var(--s2);padding:var(--s1) var(--s2);font-size:var(--f1)}
+.banner.pinned{position:fixed;left:0;right:0;top:0;z-index:100;margin:0;border-radius:0;border-width:0 0 4px;display:flex;align-items:center;gap:var(--s2);font-weight:700;box-shadow:var(--shadow-pop)}
+.banner.pinned:not(.show){display:none}
+.banner.pinned span{flex:1}
+
+/* ---- 확인 대화 하나: index.html·workflow.js 가 같이 쓴다(openModal) ---- */
+.modalBack{display:none;position:fixed;inset:0;z-index:120;background:var(--overlay);align-items:center;justify-content:center;padding:var(--s3)}
+.modalBack.show{display:flex}
+.modal{width:100%;max-width:520px;max-height:calc(100vh - 2 * var(--s3));overflow:auto;padding:var(--s3);background:var(--surface);border:1px solid var(--border);border-radius:var(--r3);box-shadow:var(--shadow-modal)}
+.modalTitle{margin:0 0 var(--s2);font-size:var(--f3);font-weight:800}
+.modalBody{font-size:var(--f2);line-height:1.6}
+.modalBody p{margin:var(--s1) 0}
+.modalBody ul{margin:var(--s1) 0;padding-left:var(--s3)}
+.modalBody li{margin:2px 0}
+.modalError{margin-top:var(--s2);color:var(--danger);font-size:var(--f1);white-space:pre-wrap}
+.modalError:empty{display:none}
+.modalActions{display:flex;justify-content:flex-end;gap:var(--s2);margin-top:var(--s3)}
+
+/* ---- 화면 뼈대 ---- */
 #wrap{display:flex;min-height:100vh}
-#nav{width:300px;flex:0 0 300px;background:#fff;border-right:1px solid var(--line);position:sticky;top:0;height:100vh;overflow:auto;padding:0 0 18px;transition:width .2s,flex-basis .2s}
-body.navcol #nav{width:0;flex:0 0 0;overflow:hidden}
-#navToggle{position:fixed;top:50%;transform:translateY(-50%);left:300px;z-index:40;width:22px;height:56px;background:var(--acc2);color:#fff;border:0;border-radius:0 8px 8px 0;cursor:pointer;font-size:13px;box-shadow:1px 0 3px rgba(0,0,0,.15);transition:left .2s}
+#nav{width:var(--nav-w);flex:0 0 var(--nav-w);background:var(--surface);border-right:1px solid var(--border);position:sticky;top:0;height:100vh;overflow:auto;padding:0 0 var(--s3);transition:width .2s,flex-basis .2s}
+body.navcol #nav{width:0;flex:0 0 0;overflow:hidden;border-right:0}
+#navToggle{position:fixed;top:50%;transform:translateY(-50%);left:var(--nav-w);z-index:40;width:22px;height:56px;padding:0;display:grid;place-items:center;
+  background:var(--surface);color:var(--text-2);border:1px solid var(--border);border-left:0;border-radius:0 var(--r2) var(--r2) 0;cursor:pointer;box-shadow:var(--shadow-pop);transition:left .2s}
+#navToggle .ic{transition:transform .2s}
 body.navcol #navToggle{left:0}
-#nav h1{font-size:14px;padding:18px;color:#fff;margin:0;background:var(--acc2);font-weight:800;line-height:1.4}
-#nav .hint{font-size:11px;color:var(--mut);padding:10px 14px;border-bottom:1px solid var(--line)}
-#main{flex:1;padding:24px 32px;min-width:0}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin:10px 0;box-shadow:var(--shadow)}
-.btn{background:#fff;color:var(--acc2);border:1px solid var(--acc);border-radius:6px;padding:6px 11px;font-size:12px;cursor:pointer;font-weight:700}
-.btn:hover{background:#eff6ff}
-.btn:disabled{opacity:.4;cursor:default;font-weight:600}
-.btn:disabled:hover{background:#fff}
-.btn.on{background:var(--acc2);color:#fff}
-.btn.warn{border-color:var(--bad);color:var(--bad)}
-.btn.warn.on{background:var(--bad);color:#fff}
-.btn.sm{padding:3px 8px;font-size:11px}
-.badge{display:inline-block;background:#eef4ff;color:var(--acc2);border:1px solid #c7d7fe;border-radius:20px;padding:2px 9px;font-size:11px;margin:2px 4px 2px 0}
-.badge.done{background:#ecfdf3;color:var(--ok);border-color:#bbf7d0}
-.badge.excluded{background:#fef2f2;color:var(--bad);border-color:#fecaca}
-.badge.review{background:#fffbeb;color:#b45309;border-color:#fde68a}
-.muted{color:var(--mut);font-size:13px}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-.actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.folder{border-bottom:1px solid var(--line)}
-.folderHead{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:#f8fafc;padding:11px 14px;cursor:pointer;color:var(--ink);font-weight:800;text-align:left}
-.folderHead:hover{background:#eff6ff}
+body.navcol #navToggle .ic{transform:rotate(180deg)}
+.brand{display:flex;align-items:center;gap:var(--s1);padding:var(--s3) var(--s3) var(--s2);font-size:var(--f3);font-weight:800;letter-spacing:-.02em}
+.brandMark{width:22px;height:22px;flex:none;border-radius:var(--r1);background:var(--primary);position:relative}
+.brandMark::after{content:"";position:absolute;inset:5px;border:2px solid var(--primary-fg);border-radius:calc(var(--r1) - 4px)}
+#nav .hint{padding:0 var(--s3) var(--s2);border-bottom:1px solid var(--border);color:var(--muted);font-size:var(--f1)}
+#main{flex:1;padding:var(--s3) var(--s4);min-width:0}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r3);padding:var(--s3);margin:var(--s2) 0;box-shadow:var(--shadow-card)}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s2)}
+.topbar.flush{margin:0}
+.actions{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap}
+.smallRow{display:flex;gap:var(--s1);align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.pageTitle{font-size:var(--f4);font-weight:800;letter-spacing:-.02em;line-height:1.25}
+.panelTitle{font-size:var(--f2);font-weight:700}
+.fieldLabel{font-weight:700}
+.note{margin:var(--s1) 0 0}
+.empty{max-width:760px;margin:var(--s4) auto;padding:var(--s4);text-align:center}
+.empty .muted{margin-top:var(--s1);font-size:var(--f2)}
+.emptyIcon{width:64px;height:64px;margin:0 auto var(--s2);display:grid;place-items:center;border-radius:50%;background:var(--primary-soft);color:var(--primary-text)}
+.emptyIcon .ic{width:30px;height:30px}
+
+/* ---- 사이드바(발표 목록) ---- */
+.navBulkRow{display:flex;flex-direction:column;gap:var(--s1);align-items:stretch;padding:var(--s2) var(--s3);border-bottom:1px solid var(--border)}
+.navBulkRow>label{display:flex;align-items:center;gap:var(--s1);cursor:pointer;font-size:var(--f1);color:var(--text-2)}
+.navRotRow{display:flex;gap:var(--s1);align-items:center}
+.navRotRow .btn{flex:1 1 0;min-width:0}
+.folder{border-bottom:1px solid var(--border)}
+.folderHead{width:100%;display:flex;align-items:center;justify-content:space-between;gap:var(--s1);border:0;background:var(--surface-2);padding:var(--s2) var(--s3);cursor:pointer;color:var(--text);font-weight:700;text-align:left}
+.folderHead:hover{background:var(--primary-soft)}
+.folderHead .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folderHead .tw{color:var(--muted)}
+.folder.collapsed .twOpen,.folder:not(.collapsed) .twClosed{display:none}
 .folderRename{cursor:default;align-items:flex-start;flex-wrap:wrap}
-.folderRename input{flex:1;min-width:120px;border:1px solid var(--acc);border-radius:5px;padding:5px 7px;font:inherit;color:var(--ink);background:#fff}
-.folderRenameError{width:100%;font-size:11px;color:var(--bad);font-weight:600}
-.folderMeta{font-size:11px;color:var(--mut);font-weight:600;white-space:nowrap}
-.bulkActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line);background:#fffbeb}
-.folderBody{padding:5px 0 8px}
+.folderRename input{flex:1;min-width:120px;border:1px solid var(--primary);border-radius:var(--r1);padding:var(--s1);font:inherit;color:var(--text);background:var(--surface)}
+.folderRenameError{width:100%;font-size:var(--f1);color:var(--danger);font-weight:600}
+.folderMeta{font-size:var(--f1);color:var(--muted);font-weight:600;white-space:nowrap}
+.bulkActions{display:flex;gap:var(--s1);align-items:center;flex-wrap:wrap;padding:var(--s1) var(--s2);border-top:1px solid var(--border);background:var(--warn-soft)}
+.folderBody{padding:var(--s1) 0}
 .folder.collapsed .folderBody{display:none}
 #folderList,.slideItem{user-select:none;-webkit-user-select:none}
-.slideItem{display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;width:100%;border:0;background:#fff;padding:6px 12px 6px 16px;text-align:left;cursor:pointer;color:var(--ink);border-left:3px solid transparent}
-.slideItem:hover{background:#f8fafc}
-.slideItem.active{background:#eff6ff;border-left-color:var(--acc);font-weight:700}
-.slideItem.selected{background:#fff7d6;box-shadow:inset 3px 0 0 0 #d97706}
-.slideItem.active.selected{background:linear-gradient(90deg,#fff7d6 0,#fff7d6 42%,#eff6ff 42%,#eff6ff 100%)}
-.slideItem.excluded{opacity:.48;text-decoration:line-through}
-.slideItem.dragging{opacity:.4;outline:2px dashed var(--acc)}
+.slideItem{display:grid;grid-template-columns:44px 1fr auto;gap:var(--s2);align-items:center;width:100%;border:0;background:var(--surface);padding:var(--s1) var(--s2) var(--s1) var(--s3);text-align:left;cursor:pointer;color:var(--text);border-left:3px solid transparent}
+.slideItem:hover{background:var(--surface-2)}
+.slideItem.active{background:var(--primary-soft);border-left-color:var(--primary);font-weight:700}
+.slideItem.selected{background:var(--warn-soft);box-shadow:inset 3px 0 0 0 var(--warn)}
+.slideItem.active.selected{background:linear-gradient(90deg,var(--warn-soft) 0,var(--warn-soft) 42%,var(--primary-soft) 42%,var(--primary-soft) 100%)}
+.slideItem.active .badge.auto{background:var(--surface)}   /* 선택 줄 배경과 같은 색이라 알약이 묻히지 않게 */
+.slideItem.excluded .thumb{opacity:.45}
+.slideItem.excluded .name{opacity:.55;text-decoration:line-through}
+.slideItem.dragging{opacity:.4;outline:2px dashed var(--primary)}
 .slideItem[draggable=true]{cursor:grab}
-.folder.dragover{background:#eff6ff;box-shadow:inset 0 0 0 2px var(--acc)}
-.folder.dragover .folderHead{background:#dbeafe}
-#toastBox{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(12px);
-  z-index:80;background:#0f172a;color:#fff;font-size:13px;font-weight:600;
-  padding:10px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(15,23,42,.28);
-  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:min(88vw,620px)}
-#toastBox.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.slideItem.deckItem{cursor:default}
+.slideItem.dropBefore{box-shadow:inset 0 3px 0 0 var(--primary)}
+.slideItem.dropAfter{box-shadow:inset 0 -3px 0 0 var(--primary)}
+.slideItem.dragFollow{background:var(--primary-soft);box-shadow:inset 3px 0 0 0 var(--primary);opacity:.85}
+.folder.dragover{background:var(--primary-soft);box-shadow:inset 0 0 0 2px var(--primary)}
+.folder.dragover .folderHead{background:color-mix(in srgb,var(--primary) 14%,var(--surface))}
+.folder[data-drop-hint]{position:relative}
+.folder[data-drop-hint]::after{content:attr(data-drop-hint);position:absolute;right:var(--s1);top:var(--s1);z-index:40;background:var(--primary);color:var(--primary-fg);font-size:var(--f1);font-weight:700;padding:3px var(--s1);border-radius:var(--r-pill);pointer-events:none;white-space:nowrap}
+.thumb{width:44px;height:32px;object-fit:cover;border:1px solid var(--border);border-radius:var(--r1);background:var(--photo-bg)}
+.slideItem.deckItem .thumb{outline:2px solid var(--border-strong)}
+.name{font-size:var(--f2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.state{display:flex;gap:4px}
+.ctxMenu{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow-pop);padding:4px;min-width:170px}
+.ctxMenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:var(--s1) var(--s2);font-size:var(--f1);cursor:pointer;border-radius:var(--r1);color:var(--text);font-weight:600}
+.ctxMenu button:hover{background:var(--surface-3)}
+.ctxMenu button:disabled{color:var(--muted);opacity:.55;cursor:not-allowed}
+.ctxMenu button:disabled:hover{background:none}
+.ctxSep{border-top:1px solid var(--border);margin:4px 0}
+
+/* ---- 발표자료(DECK) 보기 ---- */
 #deckView{display:none}
 body.deckmode #deckView{display:block}
 body.deckmode .editorGrid,body.deckmode #colorPanel,body.deckmode #ratioPanel,
-body.deckmode #doneBtn,body.deckmode #colorModeBtn{display:none}
-.deckView .deckStage{display:flex;align-items:center;justify-content:center;
-  background:#0f172a;border-radius:8px;padding:14px;margin-top:10px;min-height:60vh}
-.deckView .deckStage img{max-width:100%;max-height:76vh;object-fit:contain;
-  box-shadow:0 6px 26px rgba(0,0,0,.35);background:#fff}
-.slideItem.deckItem{cursor:default}
-.slideItem.deckItem .thumb{outline:2px solid #c7d2fe}
-.badge.deck{background:#eef2ff;color:#4338ca}
-.slideItem.dropBefore{box-shadow:inset 0 3px 0 0 var(--acc)}
-.slideItem.dropAfter{box-shadow:inset 0 -3px 0 0 var(--acc)}
-.slideItem.dragFollow{background:#f1f5ff;box-shadow:inset 3px 0 0 0 var(--acc);opacity:.85}
-.folder[data-drop-hint]{position:relative}
-.folder[data-drop-hint]::after{content:attr(data-drop-hint);position:absolute;right:8px;top:6px;
-  z-index:40;background:var(--acc);color:#fff;font-size:11px;font-weight:700;
-  padding:3px 8px;border-radius:99px;pointer-events:none;white-space:nowrap}
-.ctxMenu{position:fixed;z-index:50;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgba(15,23,42,.18);padding:4px;min-width:150px}
-.ctxMenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:7px 10px;font-size:12px;cursor:pointer;border-radius:4px;color:var(--ink);font-weight:600}
-.ctxMenu button:hover{background:#f1f5f9}
-.ctxMenu button:disabled{color:var(--mut);opacity:.55;cursor:not-allowed}
-.ctxMenu button:disabled:hover{background:none}
-.ctxSep{border-top:1px solid var(--line);margin:4px 0}
-/* 체크박스 한 줄 + 그 아래 회전 버튼 한 줄(2개 나란히). 같은 줄에 셋을 넣으면 좁은 사이드바에서
-   둘째 버튼만 다음 줄로 밀려 계단 모양이 된다 — 처음부터 아래 줄에 나란히 둔다. */
-.navBulkRow{display:flex;flex-direction:column;gap:7px;align-items:stretch;padding:9px 14px;border-bottom:1px solid var(--line)}
-.navBulkRow>label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--mut)}
-.navRotRow{display:flex;gap:6px;align-items:center}
-.navRotRow .btn{flex:1 1 0;min-width:0;white-space:nowrap;text-align:center}
-.rotGlyph{font-size:14px;line-height:1;vertical-align:-2px}
-.thumb{width:34px;height:22px;object-fit:cover;border:1px solid var(--line);border-radius:3px;background:#f1f5f9}
-.name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.state{font-size:10px;display:flex;gap:3px}
-.empty{max-width:760px;margin:80px auto;text-align:center}
-.editorGrid{display:grid;grid-template-columns:minmax(360px,1.2fr) minmax(320px,.8fr);gap:16px;align-items:start}
-@media(max-width:1080px){.editorGrid{grid-template-columns:1fr}#main{padding:18px}}
+body.deckmode #doneBtn,body.deckmode #modeSeg{display:none}
+.deckStage{display:flex;align-items:center;justify-content:center;background:var(--stage-bg);border-radius:var(--r2);padding:var(--s2);margin-top:var(--s2);min-height:60vh}
+.deckStage img{max-width:100%;max-height:76vh;object-fit:contain;box-shadow:var(--shadow-photo);background:var(--surface)}
+
+/* ---- 보정 화면: 원본 사진(경계) | 보정 미리보기 ---- */
+.editorGrid{display:grid;grid-template-columns:minmax(360px,1.2fr) minmax(320px,.8fr);gap:var(--s3);align-items:start}
+@media(max-width:1080px){.editorGrid{grid-template-columns:1fr}#main{padding:var(--s3)}}
 .stagePanel{overflow:auto}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin:var(--s1) 0 var(--s2);padding:3px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r2)}
+.tools .vr{width:1px;height:16px;background:var(--border-strong);margin:0 3px}
+.tools .clipState{margin-left:var(--s1)}
 /* 상자 크기는 layoutStage() 가 사진 크기·회전에 맞춰 max-width/aspect-ratio 로 넣는다.
-   폭을 100% 로 두어 창 크기 변화는 CSS 가 알아서 따라간다(핸들·비율이 % 기반이라 재계산 불필요). */
-.stage{position:relative;display:block;width:100%;line-height:0;background:#0f172a}
-.stage.degenerate{outline:3px solid var(--bad);outline-offset:3px}
+   폭을 100% 로 두어 창 크기 변화는 CSS 가 알아서 따라간다(손잡이·비율이 % 기반이라 재계산 불필요). */
+.stage{position:relative;display:block;width:100%;line-height:0;background:var(--photo-bg);border-radius:var(--r1)}   /* overflow 는 걸지 않는다 — 가장자리에 놓인 손잡이가 잘린다 */
+.stage.degenerate{outline:3px solid var(--danger);outline-offset:3px}
 /* 사진은 상자 한가운데에 얹고 90° 단위로 돌린다(transform 은 layoutStage() 가 설정). */
-.stage img{position:absolute;left:50%;top:50%;display:block;width:100%;height:auto;max-width:none;transform-origin:50% 50%;transform:translate(-50%,-50%);user-select:none}
+.stage img{position:absolute;left:50%;top:50%;display:block;width:100%;height:auto;max-width:none;transform-origin:50% 50%;transform:translate(-50%,-50%);user-select:none;border-radius:inherit}
 .quadLine{position:absolute;inset:0;pointer-events:none}
-.cornerHandle{position:absolute;width:15px;height:15px;margin-left:-7.5px;margin-top:-7.5px;background:#fff;border:2px solid var(--acc);border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.24);cursor:grab;z-index:5}
+.cornerHandle{position:absolute;width:16px;height:16px;margin-left:-8px;margin-top:-8px;background:var(--surface);border:3px solid var(--primary);border-radius:calc(var(--r1) - 2px);box-shadow:var(--shadow-pop);cursor:grab;z-index:5}
 .cornerHandle:active{cursor:grabbing}
 .cornerHandle.nw{cursor:nwse-resize}.cornerHandle.ne{cursor:nesw-resize}.cornerHandle.sw{cursor:nesw-resize}.cornerHandle.se{cursor:nwse-resize}
-.edgeHandle{position:absolute;width:14px;height:14px;margin-left:-7px;margin-top:-7px;background:rgba(37,99,235,.35);border:1px solid var(--acc);border-radius:50%;cursor:move;z-index:4}
-.edgeHandle:hover{background:rgba(37,99,235,.6)}
-.previewCanvas{width:100%;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:6px;display:block}
-.smallRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-kbd{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f5f9;border:1px solid var(--line);border-radius:4px;padding:1px 5px}
-/* ---- 🎨 색보정 모드 ---- */
-.previewWrap{max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
+.edgeHandle{position:absolute;width:14px;height:14px;margin-left:-7px;margin-top:-7px;background:var(--primary);border:2px solid var(--surface);border-radius:50%;cursor:move;z-index:4}
+.edgeHandle:hover{background:var(--primary-text)}
+.previewCanvas{width:100%;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r1);display:block}
+.previewWrap{max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--r1);background:var(--surface)}
 .previewWrap .previewCanvas{border:0;border-radius:0}
 .previewWrap.zoom100{max-height:70vh}
 .previewWrap.zoom100 .previewCanvas{width:auto;max-width:none}
+
+/* ---- 색보정 모드 ---- */
 .colorPanel{display:none}
 body.colormode .colorPanel{display:block}
-/* 색보정 모드에서는 코너/변 핸들을 감춰 실수로 warp 이 바뀌지 않게 한다 */
+/* 색보정 모드에서는 손잡이를 감춰 실수로 경계가 바뀌지 않게 한다 */
 body.colormode .cornerHandle,body.colormode .edgeHandle{display:none}
-.sliderGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:9px 20px}
-.sliderRow{display:grid;grid-template-columns:96px 1fr 46px 24px;gap:8px;align-items:center}
-.sliderRow>label{font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap;display:flex;align-items:center;gap:4px}
-.sliderRow input[type=range]{width:100%;margin:0;accent-color:var(--acc)}
-.sliderRow .val{font:12px ui-monospace,Menlo,monospace;text-align:right;color:var(--mut)}
-.sliderRow .rst{border:1px solid var(--line);background:#fff;color:var(--mut);border-radius:4px;cursor:pointer;font-size:12px;line-height:1;padding:2px 4px}
-.sliderRow .rst:hover{background:#eff6ff;color:var(--acc2);border-color:var(--acc)}
-.sliderRow.py>label{color:var(--warn)}
-.pybadge{display:inline-block;background:#fff7ed;color:var(--warn);border:1px solid #fed7aa;border-radius:10px;padding:0 6px;font-size:9px;font-weight:700}
-.colorActions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
-body.colormode #beforeAfterBtn.on{background:var(--warn);color:#fff;border-color:var(--warn)}
-/* 색보정 모드에선 원본(코너) 패널을 감추고, 미리보기(좌) | 색보정 패널(우) 2열로 둔다.
-   코너 모드 복귀 시 body.colormode 제거만으로 자동 원복. minmax(0,1fr) — 기본 1fr 은
-   minmax(auto,1fr) 이라 캔버스 콘텐츠 min-width 에 막힌다. 원본 비교는 b키/원본비교 버튼.
-   우측 폭 315px = 슬라이더 행 285px + .panel padding 14*2 + border 1*2.
-   285px 는 변경 전 행 폭(1440:335 / 1920:367)의 4/5(268/294) 를 양쪽 ±10% 안에서
-   만족하는 단일값이다. 세로는 calc 로 잘라 페이지 전체가 아닌 패널만 스크롤시킨다. */
+.sliderGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--s2) var(--s3)}
+.sliderRow{display:grid;grid-template-columns:104px 1fr 40px 30px;gap:var(--s1);align-items:center}
+.sliderRow>label{font-size:var(--f1);font-weight:700;color:var(--text);display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.sliderRow input[type=range]{width:100%;margin:0;accent-color:var(--primary)}
+.sliderRow .val{font-size:var(--f1);font-variant-numeric:tabular-nums;text-align:right;color:var(--muted)}
+.colorActions{display:flex;gap:var(--s1);align-items:center;flex-wrap:wrap;margin-top:var(--s2);padding-top:var(--s2);border-top:1px solid var(--border)}
+.colorNote{margin:var(--s1) 0 0}
+/* 색보정 모드에선 원본(경계) 패널을 감추고, 미리보기(좌) | 색보정 패널(우) 2열로 둔다.
+   경계 모드 복귀 시 body.colormode 제거만으로 자동 원복. minmax(0,1fr) — 기본 1fr 은
+   minmax(auto,1fr) 이라 캔버스 콘텐츠 min-width 에 막힌다. 원본 비교는 b키/원본 비교 버튼.
+   우측 폭 340px = 슬라이더 행 약 295px + .panel padding 20*2 + border 2 + 여유. 세로는 calc 로 잘라 페이지 전체가 아닌 패널만 스크롤시킨다. */
 body.colormode .stagePanel{display:none}
-body.colormode .editorGrid{grid-template-columns:minmax(0,1fr) 315px}
+body.colormode .editorGrid{grid-template-columns:minmax(0,1fr) 340px}
 body.colormode .sliderGrid{grid-template-columns:minmax(0,1fr)}
 body.colormode .colorPanel{max-height:calc(100vh - 250px);overflow-y:auto}
 body.colormode .previewWrap{max-height:calc(100vh - 350px)}
@@ -156,227 +249,212 @@ body.colormode .previewWrap.zoom100{max-height:calc(100vh - 350px)}
   body.colormode .editorGrid{grid-template-columns:minmax(0,1fr)}
   body.colormode .colorPanel{max-height:none;overflow-y:visible}
 }
-/* 💧 스포이드 */
 body.eyedropping #preview{cursor:crosshair}
-#eyedropBtn.on{background:var(--acc2);color:#fff}
-/* 📊 레벨 그래프 */
-.levelBox{margin:12px 0 0;padding:10px 0 0;border-top:1px solid var(--line)}
-.levelGraph{width:100%;max-width:420px;height:auto;display:block;margin-top:6px;background:#fff;border:1px solid var(--line);border-radius:6px;cursor:ew-resize;touch-action:none}
-/* ---- ⚡ 자동 보정 4종 + 화자 일괄 — 미리보기 패널 제목 옆 빈 공간 ----
-   색보정 모드에서만 나타난다(코너 모드에선 무의미). topbar 가 flex-wrap 이라 폭이 모자라면
-   줄바꿈으로 물러나고, 좁을 땐 ↑/↓ 힌트를 감춰 자리를 내준다. */
-.autoBar{display:none;gap:6px;align-items:center;flex-wrap:wrap}
+.levelBox{margin:var(--s2) 0 0;padding:var(--s2) 0 0;border-top:1px solid var(--border)}
+.levelGraph{width:100%;max-width:420px;height:auto;display:block;margin-top:var(--s1);background:var(--surface);border:1px solid var(--border);border-radius:var(--r1);cursor:ew-resize;touch-action:none}
+/* 자동 보정 4종 + 발표 전체 적용 — 미리보기 패널 제목 옆. 색보정 모드에서만 나타난다.
+   topbar 가 flex-wrap 이라 폭이 모자라면 줄바꿈으로 물러나고, 좁을 땐 ↑/↓ 힌트를 감춰 자리를 내준다. */
+.autoBar{display:none;gap:var(--s1);align-items:center;flex-wrap:wrap}
 body.colormode .autoBar{display:flex}
 body.colormode .previewHint{display:none}
-.autoBar .autoSep{width:1px;height:18px;background:var(--line);margin:0 3px}
-.autoBar .autoLbl{font-size:11px;color:var(--mut);font-weight:700}
-#autoLevelsBtn.on{background:var(--acc2);color:#fff}
-#autoLevelsRstBtn{display:none}
-#autoLevelsRstBtn.show{display:inline-block}
-#applySpeakerBtn{border-color:var(--warn);color:var(--warn)}
-#applySpeakerBtn:hover{background:#fff7ed}
-/* ---- 💾 저장 상태 / 백업 ---- */
-.saveBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 9px;padding:6px 8px;
-  border:1px solid var(--line);border-radius:6px;background:var(--panel2);font-size:11px}
-.saveBar .saveState{color:var(--ok);font-weight:700;white-space:nowrap}
-.saveBar .backupAge{color:var(--mut);white-space:nowrap}
-.saveBar.stale{background:#fff7ed;border-color:#fed7aa}
+.autoBar .autoSep{width:1px;height:18px;background:var(--border-strong);margin:0 3px}
+.autoBar .autoLbl{font-size:var(--f1);color:var(--muted);font-weight:700}
+/* 저장 상태 / 백업 */
+.saveBar{display:flex;gap:var(--s1);align-items:center;flex-wrap:wrap;margin:0 0 var(--s2);padding:var(--s1) var(--s2);border:1px solid var(--border);border-radius:var(--r2);background:var(--surface-2);font-size:var(--f1)}
+.saveBar .saveState{color:var(--success);font-weight:700;white-space:nowrap}
+.saveBar .backupAge{color:var(--muted);white-space:nowrap}
+.saveBar.stale{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
 .saveBar.stale .backupAge{color:var(--warn);font-weight:700}
-.saveBar.stale #backupNowBtn{background:var(--warn);color:#fff;border-color:var(--warn)}
-.saveBar.fail{background:#fef2f2;border-color:#fecaca}
-.saveBar.fail .saveState{color:var(--bad)}
-/* localStorage 저장 실패 = 224장 작업이 날아갈 수 있는 재앙 → 조용히 실패시키지 않는다 */
-#storeFail{display:none;position:fixed;left:0;right:0;top:0;z-index:100;background:var(--bad);color:#fff;
-  padding:12px 16px;font-size:13px;font-weight:700;line-height:1.5;box-shadow:0 2px 10px rgba(0,0,0,.35)}
-#storeFail.show{display:block}
-#storeFail button{margin-left:10px;background:#fff;color:var(--bad);border:0;border-radius:5px;
-  padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}
-/* ---- 인라인 확인 대화 (confirm() 금지 — 로컬 HTML 도구 규칙) ---- */
-#modalBack{display:none;position:fixed;inset:0;z-index:90;background:rgba(15,23,42,.45)}
-#modalBack.show{display:flex;align-items:center;justify-content:center}
-.modalBox{background:#fff;border-radius:10px;padding:18px 20px;max-width:430px;margin:16px;box-shadow:0 8px 30px rgba(0,0,0,.32)}
-.modalBox h4{margin:0 0 8px;font-size:15px}
-.modalBox .msg{font-size:13px;margin:0 0 14px;line-height:1.6}
-.modalActions{display:flex;gap:8px;justify-content:flex-end}
+.saveBar.fail{background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 30%,transparent)}
+.saveBar.fail .saveState{color:var(--danger)}
 </style>
 </head>
 <body>
-<div id="storeFail"><span id="storeFailMsg"></span><button onclick="backupNow()">지금 백업 내보내기</button><button onclick="document.getElementById('storeFail').classList.remove('show')">닫기</button></div>
-<div id="modalBack" onclick="if(event.target===this)closeModal()">
-  <div class="modalBox" role="dialog" aria-modal="true">
-    <h4 id="modalTitle"></h4>
-    <p class="msg" id="modalMsg"></p>
+<svg class="sprite" aria-hidden="true" focusable="false"><symbol id="i-rcw" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></symbol><symbol id="i-rccw" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol><symbol id="i-scan" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="8" width="10" height="8" rx="1"/></symbol><symbol id="i-undo" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol><symbol id="i-copy" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol><symbol id="i-paste" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol><symbol id="i-coll" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></symbol><symbol id="i-down" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol><symbol id="i-right" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol><symbol id="i-check" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol><symbol id="i-left" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol><symbol id="i-arrow" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol><symbol id="i-upload" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol><symbol id="i-ban" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol><symbol id="i-x" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol><symbol id="i-folder" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.3 10H20a2 2 0 0 1 1.9 2.6l-1.6 5.5A2 2 0 0 1 18.4 19H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.7.9l.8 1.2a2 2 0 0 0 1.7.9H18a2 2 0 0 1 2 2v2"/></symbol><symbol id="i-grip" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></symbol></svg>
+<div id="storeFail" class="banner error pinned" role="alert"><span id="storeFailMsg"></span><button type="button" class="btn sm" onclick="backupNow()">지금 백업 내보내기</button><button type="button" class="btn sm ghost" onclick="document.getElementById('storeFail').classList.remove('show')">닫기</button></div>
+<!-- 확인 대화는 이것 하나. openModal({title, html|node, ok, okKind, onOk, ...}) 로 채워 쓴다(workflow.js 도 같은 함수를 쓴다). -->
+<div id="modalBack" class="modalBack" onclick="if(event.target===this)requestCloseModal()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle" class="modalTitle"></h2>
+    <div id="modalMsg" class="modalBody"></div>
+    <div id="modalError" class="modalError" role="alert"></div>
     <div class="modalActions">
-      <button class="btn sm" onclick="closeModal()">취소</button>
-      <button id="modalOkBtn" class="btn sm warn on">적용</button>
+      <button id="modalCancelBtn" type="button" class="btn">취소</button>
+      <button id="modalOkBtn" type="button" class="btn primary">확인</button>
     </div>
   </div>
 </div>
 <div id="wrap">
-  <button id="navToggle" onclick="toggleNav()" title="목록 접기/펴기">◀</button>
-  <nav id="nav">
-    <h1>슬라이드 스크린샷 보정<br>PDF 내보내기</h1>
-    <div class="hint">폴더별 이미지를 검수하고 네 모서리를 드래그해 원근을 보정합니다.</div>
+  <button id="navToggle" type="button" onclick="toggleNav()" title="사진 목록 접기/펼치기" aria-label="사진 목록 접기/펼치기" aria-expanded="true"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-coll"/></svg></button>
+  <nav id="nav" aria-label="사진 목록">
+    <h1 class="brand"><i class="brandMark"></i>슬라이드 사진 보정</h1>
+    <div class="hint">발표별로 사진을 확인하고, 손잡이를 끌어 슬라이드 경계를 맞춥니다.</div>
     <!-- '제외 항목 표시' 아래 줄에 일괄 회전 버튼 2개를 나란히. 목록에서 Shift(범위)·Ctrl/⌘(개별)로
-         고른 슬라이드를 한꺼번에 90° 돌린다. 선택이 없으면 비활성 — 사이드바 버튼이 화면 반대편의
-         현재 슬라이드를 몰래 돌리는 오작동을 막는다(한 장 회전은 보정 화면 툴바 버튼이 담당). -->
+         고른 사진을 한꺼번에 90° 돌린다. 선택이 없으면 비활성 — 사이드바 버튼이 화면 반대편의
+         현재 사진을 몰래 돌리는 오작동을 막는다(한 장 회전은 보정 화면 도구줄 버튼이 담당). -->
     <div class="navBulkRow">
       <label>
         <input type="checkbox" id="showExcludedChk" checked onchange="toggleShowExcluded(this.checked)">
         제외 항목 표시
       </label>
       <div class="navRotRow">
-        <button id="bulkRotateCwBtn" class="btn sm" onclick="bulkRotateSelected(1)" disabled
-          title="목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 고른 슬라이드를 한꺼번에 시계방향 90° 돌립니다"><span class="rotGlyph">⟳</span>시계 90°</button>
-        <button id="bulkRotateCcwBtn" class="btn sm" onclick="bulkRotateSelected(-1)" disabled
-          title="고른 슬라이드를 한꺼번에 반시계방향 90° 돌립니다"><span class="rotGlyph">⟲</span>반시계 90°</button>
+        <button id="bulkRotateCwBtn" type="button" class="btn sm" onclick="bulkRotateSelected(1)" disabled
+          title="목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 고른 사진을 한꺼번에 시계 방향 90° 돌립니다"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rcw"/></svg>시계 90°</button>
+        <button id="bulkRotateCcwBtn" type="button" class="btn sm" onclick="bulkRotateSelected(-1)" disabled
+          title="고른 사진을 한꺼번에 반시계 방향 90° 돌립니다"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rccw"/></svg>반시계 90°</button>
       </div>
-      <!-- 지금 그룹 전체의 스크린 경계를 자동으로 찾는다. 이미 손댄(모서리를 고치거나 완료 표시한) 사진은
+      <!-- 지금 발표 전체의 슬라이드 경계를 자동으로 찾는다. 이미 손댄(경계를 고치거나 완료 표시한) 사진은
            건드리지 않는다 — Alt 를 누르고 누르면 덮어쓴다. 서버 없이 열면 비활성. -->
-      <button id="groupAutoDetectBtn" class="btn sm" onclick="autoDetectGroup(curFolder,event.altKey)" disabled
-        title="워크플로 서버 연결을 확인하는 중입니다.">이 그룹 자동 찾기</button>
+      <button id="groupAutoDetectBtn" type="button" class="btn sm" onclick="autoDetectGroup(curFolder,event.altKey)" disabled
+        title="도구 서버 연결을 확인하는 중입니다."><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-scan"/></svg><span class="lbl">이 발표 경계 자동 찾기</span></button>
     </div>
     <div id="folderList"></div>
   </nav>
   <main id="main">
     <div id="empty" class="empty panel">
-      <h2>이미지 목록이 없습니다</h2>
-      <p class="muted">`../*/img/*.png`를 추가한 뒤 `python3 gen_manifest.py`를 실행하고 새로고침하세요.</p>
+      <div class="emptyIcon"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-upload"/></svg></div>
+      <h2 class="pageTitle">보정할 사진이 아직 없습니다</h2>
+      <p class="muted">사진을 넣고 ② 사진 준비를 실행하세요.</p>
     </div>
-    <section id="editor" style="display:none">
+    <section id="editor" hidden>
       <div class="topbar">
         <div>
-          <h2 id="title" style="margin:0;font-size:22px">-</h2>
+          <h2 id="title" class="pageTitle">-</h2>
           <div id="subTitle" class="muted"></div>
         </div>
         <div class="actions">
-          <button class="btn sm" onclick="moveSlide(-1)">이전</button>
-          <button class="btn sm" onclick="moveSlide(1)">다음</button>
-          <button class="btn sm" onclick="resetCorners()">리셋</button>
-          <button id="doneBtn" class="btn sm" onclick="toggleStatus('done')">완료 표시</button>
-          <button id="excludeBtn" class="btn sm warn" onclick="toggleStatus('excluded')">제외</button>
-          <button id="colorModeBtn" class="btn sm" onclick="toggleColorMode()" title="PhotoScape식 수동 색보정 모드 (슬라이더·실시간 미리보기)">🎨 색보정</button>
+          <button type="button" class="btn" onclick="moveSlide(-1)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-left"/></svg>이전</button>
+          <button type="button" class="btn" onclick="moveSlide(1)">다음<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          <button type="button" class="btn" onclick="resetCorners()" title="경계를 처음 상태(사진 전체)로 되돌립니다">원래대로</button>
+          <div id="modeSeg" class="seg" role="tablist" aria-label="보정 방식">
+            <button id="edgeModeBtn" type="button" role="tab" aria-selected="true" onclick="setColorMode(false)" title="원본 사진에서 슬라이드 경계를 맞춥니다">경계</button>
+            <button id="colorModeBtn" type="button" role="tab" aria-selected="false" onclick="setColorMode(true)" title="슬라이더로 밝기·색을 조정하고 바로 확인합니다">색보정</button>
+          </div>
+          <button id="excludeBtn" type="button" class="btn danger" aria-pressed="false" onclick="toggleStatus('excluded')" title="이 사진을 PDF에서 뺍니다. 다시 누르면 해제합니다."><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-ban"/></svg>제외</button>
+          <button id="doneBtn" type="button" class="btn primary" aria-pressed="false" onclick="toggleStatus('done')" title="이 사진의 확인을 마쳤다고 표시합니다. 다시 누르면 해제합니다."><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>완료 표시</button>
         </div>
       </div>
       <div class="panel" id="ratioPanel">
-        <div class="topbar" style="margin:0">
+        <div class="topbar flush">
           <div class="smallRow">
-            <b>출력 비율</b>
-            <button class="btn sm ratioBtn" data-ratio="16:9">16:9</button>
-            <button class="btn sm ratioBtn" data-ratio="4:3">4:3</button>
-            <button class="btn sm ratioBtn" data-ratio="free">자유</button>
-            <span id="statusBadges"></span>
+            <span class="fieldLabel">출력 비율</span>
+            <div class="seg sm" role="radiogroup" aria-label="출력 비율">
+              <button type="button" class="ratioBtn" role="radio" aria-checked="false" data-ratio="16:9">16:9</button>
+              <button type="button" class="ratioBtn" role="radio" aria-checked="false" data-ratio="4:3">4:3</button>
+              <button type="button" class="ratioBtn" role="radio" aria-checked="false" data-ratio="free">자유</button>
+            </div>
+            <span id="statusBadges" class="state"></span>
           </div>
           <div class="actions">
-            <button id="backupExportBtn" class="btn sm" onclick="exportBackup()" title="모든 폴더의 보정·완료·제외·비율 상태를 JSON 파일로 저장">백업 내보내기</button>
-            <button id="backupImportBtn" class="btn sm" onclick="document.getElementById('backupFile').click()" title="백업 JSON을 불러와 복원">백업 불러오기</button>
-            <input id="backupFile" type="file" accept="application/json,.json" style="display:none" onchange="importBackup(this.files)">
+            <button id="backupExportBtn" type="button" class="btn sm" onclick="exportBackup()" title="모든 발표의 경계·색보정·완료·제외·비율을 JSON 파일로 저장">백업 내보내기</button>
+            <button id="backupImportBtn" type="button" class="btn sm" onclick="document.getElementById('backupFile').click()" title="백업 JSON을 불러와 복원">백업 불러오기</button>
+            <input id="backupFile" type="file" accept="application/json,.json" hidden onchange="importBackup(this.files)">
           </div>
         </div>
-        <div class="muted" style="margin-top:8px">백업은 모든 폴더의 코너·색보정·완료·제외·비율 상태를 JSON으로 저장하거나 복원합니다.<br>PDF는 작업 순서의 ④ PDF 만들기에서 원본 사진을 기준으로 고해상도로 만듭니다.</div>
+        <p class="muted note">백업은 모든 발표의 경계·색보정·완료·제외·비율을 JSON으로 저장하거나 복원합니다.<br>PDF는 작업 순서의 ④ PDF 만들기에서 원본 사진을 기준으로 고해상도로 만듭니다.</p>
       </div>
       <section id="deckView" class="panel deckView">
-        <div class="topbar"><h3 style="margin:0" id="deckTitle">발표자료</h3>
-          <span class="muted">발표자료 원본 — 모서리·색 보정 없이 그대로 씁니다. 위치도 고정입니다.</span></div>
+        <div class="topbar"><h3 id="deckTitle" class="panelTitle">발표자료</h3>
+          <span class="muted">발표자료 원본입니다 — 경계·색보정 없이 그대로 쓰고, 위치도 고정입니다.</span></div>
         <div class="deckStage"><img id="deckImg" alt=""></div>
       </section>
       <div class="editorGrid">
         <div class="panel stagePanel">
           <div class="topbar">
-            <h3 style="margin:0">원본 모서리 지정</h3>
-            <span class="muted">코너·변 핸들 모두 드래그 가능</span>
+            <h3 class="panelTitle">원본 사진</h3>
+            <span class="muted">모서리·변 손잡이를 끌어 슬라이드 경계에 맞추세요</span>
           </div>
-          <div class="smallRow" style="margin:8px 0">
-            <button id="copyCornersBtn" class="btn sm" onclick="copyCorners()">경계 복사</button>
-            <button id="pasteCornersBtn" class="btn sm" onclick="pasteCorners()" disabled>경계 붙여넣기</button>
-            <button id="rotateCwBtn" class="btn sm" onclick="rotateCurrentSlide(1)" title="원본 화면과 보정 결과를 함께 시계방향으로 90° 돌립니다 — 카메라를 눕혀 찍어 옆으로 누운 사진 세우기 (원본 파일은 그대로)"><span class="rotGlyph">⟳</span> 시계 90°</button>
-            <button id="rotateCcwBtn" class="btn sm" onclick="rotateCurrentSlide(-1)" title="원본 화면과 보정 결과를 함께 반시계방향으로 90° 돌립니다 (원본 파일은 그대로)"><span class="rotGlyph">⟲</span> 반시계 90°</button>
-            <button id="autoDetectBtn" class="btn sm" onclick="autoDetectCurrent()" disabled title="워크플로 서버 연결을 확인하는 중입니다.">자동 찾기</button>
-            <button id="autoUndoBtn" class="btn sm" onclick="undoAutoDetect()" disabled title="되돌릴 자동 찾기가 없습니다">찾기 되돌리기</button>
-            <span id="cornerClipboardStatus" class="muted"></span>
+          <div class="tools" role="toolbar" aria-label="경계 도구">
+            <button id="autoDetectBtn" type="button" class="btn ghost sm" onclick="autoDetectCurrent()" disabled title="도구 서버 연결을 확인하는 중입니다."><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-scan"/></svg><span class="lbl">경계 자동 찾기</span></button>
+            <button id="autoUndoBtn" type="button" class="btn ghost sm" onclick="undoAutoDetect()" disabled title="되돌릴 자동 찾기가 없습니다"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-undo"/></svg>되돌리기</button>
+            <span class="vr"></span>
+            <button id="rotateCwBtn" type="button" class="btn ghost sm" onclick="rotateCurrentSlide(1)" title="원본 화면과 보정 결과를 함께 시계 방향으로 90° 돌립니다 — 카메라를 눕혀 찍어 옆으로 누운 사진 세우기 (원본 파일은 그대로)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rcw"/></svg>시계 90°</button>
+            <button id="rotateCcwBtn" type="button" class="btn ghost sm" onclick="rotateCurrentSlide(-1)" title="원본 화면과 보정 결과를 함께 반시계 방향으로 90° 돌립니다 (원본 파일은 그대로)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rccw"/></svg>반시계 90°</button>
+            <span class="vr"></span>
+            <button id="copyCornersBtn" type="button" class="btn ghost sm" onclick="copyCorners()" title="이 사진의 경계와 출력 비율을 복사합니다 (⌘C)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>경계 복사</button>
+            <button id="pasteCornersBtn" type="button" class="btn ghost sm" onclick="pasteCorners()" disabled title="복사한 경계를 이 사진에 붙여넣습니다 (⌘V)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-paste"/></svg>경계 붙여넣기</button>
+            <span id="cornerClipboardStatus" class="muted clipState"></span>
           </div>
           <div id="stage" class="stage">
             <img id="sourceImg" alt="">
             <canvas id="quadCanvas" class="quadLine"></canvas>
-            <div class="edgeHandle" data-a="0" data-b="1" title="nw-ne"></div>
-            <div class="edgeHandle" data-a="1" data-b="3" title="ne-se"></div>
-            <div class="edgeHandle" data-a="3" data-b="2" title="se-sw"></div>
-            <div class="edgeHandle" data-a="2" data-b="0" title="sw-nw"></div>
-            <div class="cornerHandle nw" data-idx="0" title="nw"></div>
-            <div class="cornerHandle ne" data-idx="1" title="ne"></div>
-            <div class="cornerHandle sw" data-idx="2" title="sw"></div>
-            <div class="cornerHandle se" data-idx="3" title="se"></div>
+            <div class="edgeHandle" data-a="0" data-b="1" title="변 손잡이 (위)"></div>
+            <div class="edgeHandle" data-a="1" data-b="3" title="변 손잡이 (오른쪽)"></div>
+            <div class="edgeHandle" data-a="3" data-b="2" title="변 손잡이 (아래)"></div>
+            <div class="edgeHandle" data-a="2" data-b="0" title="변 손잡이 (왼쪽)"></div>
+            <div class="cornerHandle nw" data-idx="0" title="모서리 손잡이 (왼쪽 위)"></div>
+            <div class="cornerHandle ne" data-idx="1" title="모서리 손잡이 (오른쪽 위)"></div>
+            <div class="cornerHandle sw" data-idx="2" title="모서리 손잡이 (왼쪽 아래)"></div>
+            <div class="cornerHandle se" data-idx="3" title="모서리 손잡이 (오른쪽 아래)"></div>
           </div>
         </div>
         <div class="panel">
           <div class="topbar">
-            <h3 style="margin:0">보정 미리보기</h3>
-            <!-- ⚡ 자동 보정 4종 + 화자 일괄 — 색보정 모드에서만 표시(.autoBar). '자동 콘트라스트'는
+            <h3 class="panelTitle">보정 미리보기</h3>
+            <!-- 자동 보정 4종 + 발표 전체 적용 — 색보정 모드에서만 표시(.autoBar). '자동 콘트라스트'는
                  레벨 그래프 헤더에 있던 기존 버튼을 이리로 옮긴 것(중복 생성 아님). -->
             <div class="autoBar">
-              <span class="autoLbl">⚡ 자동</span>
-              <button id="autoLevelsBtn" class="btn sm" onclick="autoLevels()" title="자동 레벨 — R·G·B 채널을 각각 독립으로 0.1%~99.9% 구간까지 늘립니다.&#10;→ 색캐스트(누런끼·푸른끼)가 제거됩니다. 포토샵 '자동 레벨'과 동일 개념.&#10;※ 색을 바꾸고 싶지 않으면 '자동 콘트라스트'를 쓰세요.">자동 레벨</button>
-              <button id="autoLevelsRstBtn" class="btn sm" onclick="autoLevelsReset()" title="자동 레벨만 해제(다른 보정값은 유지)">↺</button>
-              <button class="btn sm" onclick="autoContrast()" title="자동 콘트라스트 — RGB를 공통 비율로 0.5%~99.5% 구간까지 늘립니다.&#10;→ 명암만 살아나고 색은 그대로 유지됩니다.&#10;※ 채널별 독립인 '자동 레벨'과 달리 색캐스트는 남습니다.">자동 콘트라스트</button>
-              <button class="btn sm" onclick="autoWhiteBalance()" title="자동 화이트밸런스 — 이미지 전체 평균색을 중성 회색으로 맞춥니다(gray-world).&#10;→ 화면 전체의 색틀어짐을 한 번에 중화. 색온도+색조를 함께 조정합니다.&#10;※ 특정 지점 기준으로 맞추려면 '💧 스포이드'를 쓰세요.">자동 화이트밸런스</button>
-              <button class="btn sm" onclick="autoTint()" title="자동 색조 — 녹색↔마젠타 축만 자동으로 맞춥니다(색조만 변경, 색온도는 그대로).&#10;→ 형광등 특유의 녹색끼를 뺄 때.">자동 색조</button>
+              <span class="autoLbl">자동 보정</span>
+              <button id="autoLevelsBtn" type="button" class="btn sm" aria-pressed="false" onclick="autoLevels()" title="색을 자동으로 맞춥니다 — 누런끼·푸른끼 같은 색 치우침을 줄입니다.&#10;색은 바꾸지 않고 명암만 살리려면 «자동 콘트라스트»를 쓰세요.">자동 레벨</button>
+              <button id="autoLevelsRstBtn" type="button" class="btn ghost sm" onclick="autoLevelsReset()" title="자동 레벨만 해제합니다(다른 보정값은 그대로)" hidden>해제</button>
+              <button type="button" class="btn sm" onclick="autoContrast()" title="명암만 자동으로 살립니다 — 색은 그대로 둡니다.&#10;색 치우침까지 줄이려면 «자동 레벨»을 쓰세요.">자동 콘트라스트</button>
+              <button type="button" class="btn sm" onclick="autoWhiteBalance()" title="화면 전체의 색 틀어짐을 한 번에 맞춥니다(색온도+색조).&#10;특정 지점을 기준으로 맞추려면 «스포이드»를 쓰세요.">자동 화이트밸런스</button>
+              <button type="button" class="btn sm" onclick="autoTint()" title="형광등 특유의 녹색끼를 뺄 때 — 색조만 자동으로 맞춥니다(색온도는 그대로).">자동 색조</button>
               <span class="autoSep"></span>
-              <button id="applySpeakerBtn" class="btn sm" onclick="confirmApplySpeaker()" title="현재 슬라이더값을 이 화자(폴더) 전체 슬라이드에 복사합니다. 확인 후 적용됩니다.">📋 이 화자 전체</button>
-              <!-- ↩︎ 되돌리기 — 이 슬라이드의 색보정 동작 최대 100스텝. 툴팁·활성상태는 renderUndoUI() 가 갱신한다.
-                   라벨은 고정폭이다: 남은 스텝수를 넣으면 (1) ↺(자동레벨 해제) 가 뜬 상태에서 autoBar 가
-                   가용폭(601px)을 넘겨 제목줄이 2행으로 접히고 미리보기가 38px 줄어들며,
-                   (2) 스텝수 자릿수에 따라 버튼 폭이 70→99px 로 흔들려 옆 버튼이 밀린다.
+              <button id="applySpeakerBtn" type="button" class="btn sm danger" onclick="confirmApplySpeaker()" title="현재 색보정 값을 이 발표의 모든 사진에 덮어씁니다. 확인 후 적용됩니다.">이 발표 전체 적용</button>
+              <!-- 되돌리기 — 이 사진의 색보정 동작 최대 100스텝. 툴팁·활성상태는 renderUndoUI() 가 갱신한다.
+                   라벨은 고정폭이다: 남은 스텝수를 넣으면 (1) 해제 버튼이 뜬 상태에서 autoBar 가
+                   가용폭을 넘겨 제목줄이 2행으로 접히고 미리보기가 줄어들며,
+                   (2) 스텝수 자릿수에 따라 버튼 폭이 흔들려 옆 버튼이 밀린다.
                    → 남은 스텝수는 툴팁과 하단 메시지(#colorMsg)에서 보여준다. -->
-              <button id="undoBtn" class="btn sm" onclick="doUndo()" disabled title="되돌릴 동작이 없습니다&#10;Ctrl+Z / ⌘Z">↩︎ 되돌리기</button>
+              <button id="undoBtn" type="button" class="btn sm" onclick="doUndo()" disabled title="되돌릴 동작이 없습니다&#10;Ctrl+Z / ⌘Z"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-undo"/></svg>되돌리기</button>
             </div>
-            <span class="muted previewHint"><kbd>↑</kbd>/<kbd>↓</kbd> 이동</span>
+            <span class="muted previewHint"><kbd>↑</kbd> <kbd>↓</kbd> 사진 이동</span>
           </div>
           <div id="previewWrap" class="previewWrap"><canvas id="preview" class="previewCanvas"></canvas></div>
-          <p class="muted">여기서 확인한 코너·색보정·출력 비율은 자동 저장되며, ④ PDF 만들기에서 원본 사진에 적용됩니다.</p>
+          <p class="muted note">경계·색보정·출력 비율은 자동 저장되고, ④ PDF 만들기에서 원본 사진에 적용됩니다.</p>
         </div>
-      <!-- colorPanel 은 editorGrid 의 3번째 항목이다. 코너 모드에선 display:none 이라
+      <!-- colorPanel 은 editorGrid 의 3번째 항목이다. 경계 모드에선 display:none 이라
            그리드 항목이 되지 않아 기존 2열(원본|미리보기) 레이아웃이 그대로 유지되고,
            색보정 모드에선 stagePanel 이 빠져 미리보기|색보정 2열이 된다. -->
       <section id="colorPanel" class="panel colorPanel">
-        <div class="topbar" style="margin:0 0 8px">
-          <h3 style="margin:0">🎨 수동 색보정 <span id="colorCluster" class="muted" style="font-weight:400"></span></h3>
+        <div class="topbar">
+          <h3 class="panelTitle">색보정 <span id="colorCluster" class="muted"></span></h3>
           <div class="smallRow">
-            <button id="eyedropBtn" class="btn sm" onclick="toggleEyedropper()" title="회색이어야 할 곳을 미리보기에서 클릭하면 색온도·색조를 자동 계산합니다 (5×5 평균 · 1회용 · Esc 취소).&#10;⚠️ 클릭 당시의 밝기/대비 기준 절대값을 넣습니다 — 이후 밝기·대비를 바꾸면 다시 클릭하세요(포토샵과 동일).">💧 스포이드</button>
-            <button id="beforeAfterBtn" class="btn sm" onclick="toggleBeforeAfter()" title="원본(보정 전) ↔ 보정 후 비교">원본 비교</button>
-            <button id="zoomBtn" class="btn sm" onclick="toggleZoom()" title="미리보기를 원본 해상도(100%)로 확대">100% 확대</button>
+            <button id="eyedropBtn" type="button" class="btn sm" aria-pressed="false" onclick="toggleEyedropper()" title="회색이어야 할 곳을 미리보기에서 클릭하면 색온도·색조를 자동으로 맞춥니다 (한 번만 · Esc 취소).&#10;밝기·대비를 바꾼 뒤에는 다시 클릭하세요.">스포이드</button>
+            <button id="beforeAfterBtn" type="button" class="btn sm" aria-pressed="false" onclick="toggleBeforeAfter()" title="보정 전 원본과 보정 후를 번갈아 봅니다 (B)"><span class="lbl">원본 비교</span></button>
+            <button id="zoomBtn" type="button" class="btn sm" aria-pressed="false" onclick="toggleZoom()" title="미리보기를 원본 해상도(100%)로 확대">100% 확대</button>
           </div>
         </div>
-        <!-- 💾 저장 상태 — "그냥 맞춰놓기만 하면 저장되나?" 에 대한 답을 항상 눈에 보이게.
+        <!-- 저장 상태 — "그냥 맞춰놓기만 하면 저장되나?" 에 대한 답을 항상 눈에 보이게.
              자동 저장은 브라우저 localStorage 라 캐시 삭제 시 전부 날아간다 → 백업을 여기서 유도. -->
         <div id="saveBar" class="saveBar">
-          <span id="saveState" class="saveState">💾 자동 저장됨</span>
+          <span id="saveState" class="saveState">자동 저장됨</span>
           <span id="backupAge" class="backupAge">· 백업 확인 중…</span>
-          <button id="backupNowBtn" class="btn sm" onclick="backupNow()" title="지금까지의 모든 색보정·코너·완료·제외 상태를 JSON 파일로 내려받습니다.&#10;⚠️ 자동 저장은 이 브라우저 안에만 있습니다 — 캐시를 지우면 사라지므로 주기적으로 백업하세요.">⬇ 백업 내보내기</button>
+          <button id="backupNowBtn" type="button" class="btn sm" onclick="backupNow()" title="지금까지의 모든 색보정·경계·완료·제외 상태를 JSON 파일로 내려받습니다.&#10;자동 저장은 이 브라우저 안에만 있습니다 — 캐시를 지우면 사라지므로 주기적으로 백업하세요.">백업 내보내기</button>
         </div>
         <div id="sliderGrid" class="sliderGrid"></div>
         <div class="levelBox">
-          <div class="topbar" style="margin:0">
-            <b style="font-size:12px">📊 레벨 그래프 <span class="muted" style="font-weight:400">— 검정/중간/흰 핸들 드래그 = 블랙포인트 · 감마 · 화이트포인트</span></b>
-            <!-- '자동 콘트라스트' 버튼은 미리보기 패널 헤더(⚡ 자동)로 이동했다. -->
+          <div class="topbar flush">
+            <span class="fieldLabel">밝기 분포 <span class="muted">— 삼각형 손잡이를 끌어 어두운 곳·중간·밝은 곳 기준을 바꿉니다</span></span>
+            <!-- '자동 콘트라스트' 버튼은 미리보기 패널 헤더(자동 보정)로 이동했다. -->
           </div>
           <canvas id="levelGraph" class="levelGraph" width="256" height="120"></canvas>
-          <p class="muted" id="levelNote" style="margin:6px 0 0;font-size:11px">
-            그래프는 <b>레벨 단계 직전</b>(밝기·대비·색온도·채도·감마까지 반영)의 luma 분포입니다. 세로축은 √스케일(배경 스파이크 대비).
-            핸들은 기존 <b>블랙포인트·감마·화이트포인트</b> 슬라이더의 다른 표현이라 값이 서로 연동되며, 슬라이더 눈금(step)에 맞춰 스냅됩니다.
-            ⚠️ 이 파이프라인은 <b>감마(5단계)가 레벨(6단계)보다 앞</b>이라, 중간 핸들을 끌면 히스토그램 자체가 함께 움직입니다(포토샵은 정지).
-            순서를 바꾸면 최종 PDF 파리티가 깨지고 기존 보정본이 훼손되므로 <b>의도된 동작</b>입니다.
+          <p class="muted note" id="levelNote">
+            그래프는 밝기·대비·색온도·채도·감마를 반영한 뒤의 밝기 분포입니다. 세로축은 배경이 한쪽으로 몰려도 잘 보이게 줄여서 그립니다.
+            삼각형 손잡이는 블랙포인트·감마·화이트포인트 슬라이더와 같은 값이라 서로 연동됩니다.
           </p>
         </div>
         <div class="colorActions">
-          <button class="btn sm" onclick="resetColor()" title="이 슬라이드 색보정을 기본값(원본)으로 — 단축키 R (Ctrl+Z 로 되돌릴 수 있음)">원본 리셋 (R)</button>
-          <button id="clusterPresetBtn" class="btn sm" onclick="loadClusterPreset()" title="이 슬라이드 군집의 자동 색보정 값을 슬라이더로 불러오기">자동값(군집) 불러오기</button>
-          <span style="width:12px;display:inline-block"></span>
-          <!-- '이 화자 전체' 는 미리보기 패널 헤더(⚡ 자동 옆)로 이동 — 확인 대화 포함. -->
-          <button class="btn sm" onclick="applyColorTo('cluster')" title="현재 슬라이더값을 같은 군집 전체에 복사">같은 군집 전체</button>
-          <button class="btn sm" onclick="applyColorTo('all')" title="현재 슬라이더값을 모든 슬라이드에 복사">전체</button>
-          <span id="colorMsg" class="muted"></span>
+          <button type="button" class="btn sm" onclick="resetColor()" title="이 사진의 색보정을 처음(원본) 상태로 되돌립니다 — 단축키 R (Ctrl+Z 로 취소할 수 있습니다)">원래대로 (R)</button>
+          <button id="clusterPresetBtn" type="button" class="btn sm" hidden onclick="loadClusterPreset()" title="이 사진과 같은 군집의 자동 색보정 값을 슬라이더로 불러옵니다">자동값 불러오기</button>
+          <span class="spacer"></span>
+          <!-- '이 발표 전체 적용' 은 미리보기 패널 헤더(자동 보정 옆)로 이동 — 확인 대화 포함. -->
+          <button id="clusterAllBtn" type="button" class="btn sm danger" hidden onclick="applyColorTo('cluster')" title="현재 색보정 값을 같은 군집의 모든 사진에 덮어씁니다">같은 군집 전체 적용</button>
+          <button type="button" class="btn sm danger" onclick="applyColorTo('all')" title="현재 색보정 값을 모든 발표의 모든 사진에 덮어씁니다">모든 사진에 적용</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">미리보기 화면이 최종 PDF(파이썬 렌더)와 <b>동일한 색연산·순서</b>를 씁니다. 무아레제거·다크영역통일은 미리보기에선 약식 근사이며 최종 PDF에서 정밀 적용됩니다.</p>
+        <div id="colorMsg" class="banner info compact" role="status" hidden></div>
+        <p class="muted note colorNote">미리보기는 PDF와 같은 방식으로 색을 계산합니다. 무아레제거·다크영역통일은 미리보기에서는 대략만 보이고, PDF를 만들 때 정확히 적용됩니다.</p>
       </section>
       </div>
     </section>
@@ -449,7 +527,7 @@ const ratioStore=readStore(LS_RATIOS,{});
 const colorStore=readStore(LS_COLOR,{});   // 수동 색보정값 (이미지키 → 파라미터)
 let clusterByFile={};                       // 이미지키 → 군집(dark/white/mixed) (classification.json)
 let clusterParams=null;                      // 군집별 자동 색보정 파라미터 (자동값 불러오기용)
-let colorMode=false;                         // 🎨 색보정 모드 on/off
+let colorMode=false;                         // 색보정 모드 on/off
 let colorShowOriginal=false;                 // 원본 비교(보정 전) 표시
 let showExcluded=readStore(LS_SHOW_EXCLUDED,true);
 let curFolder=folderNames[0]||null;
@@ -483,8 +561,8 @@ function writeStore(key,value){
     const quota=e&&(e.name==='QuotaExceededError'||e.name==='NS_ERROR_DOM_QUOTA_REACHED'||e.code===22||e.code===1014);
     console.error('localStorage 저장 실패:',key,e);
     showStoreFail(quota
-      ? '⚠️ 저장 공간이 가득 차 색보정이 저장되지 않았습니다! 지금 백업을 내보내세요 — 새로고침하면 최근 작업이 사라집니다.'
-      : '⚠️ 저장에 실패했습니다('+((e&&e.name)||e)+'). 사생활 보호 모드일 수 있습니다. 지금 백업을 내보내세요.');
+      ? '저장 공간이 가득 차 색보정이 저장되지 않았습니다! 지금 백업을 내보내세요 — 새로고침하면 최근 작업이 사라집니다.'
+      : '저장에 실패했습니다('+((e&&e.name)||e)+'). 사생활 보호 모드일 수 있습니다. 지금 백업을 내보내세요.');
     return false;
   }
 }
@@ -494,7 +572,7 @@ function showStoreFail(msg){
   bar.classList.add('show');
   const sb=document.getElementById('saveBar'),ss=document.getElementById('saveState');
   if(sb)sb.classList.add('fail');
-  if(ss)ss.textContent='💥 저장 실패';
+  if(ss)ss.textContent='저장 실패';
 }
 // slideColor_v1(수동 색보정)도 백업에 포함 — 코너/상태/비율/이동과 함께 라운드트립.
 // slideOrder_v1(폴더 안 순서)도 백업에 포함한다 — 자료 사이에 사진을 끼워 넣은 배치가
@@ -531,7 +609,7 @@ function exportBackup(){
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   markBackedUp();
 }
-// ---- 💾 저장/백업 상태 (사용자 질문: "맞춰놓기만 하면 저장되나?" → 자동 저장은 되지만 브라우저 안에만) ----
+// ---- 저장/백업 상태 (사용자 질문: "맞춰놓기만 하면 저장되나?" → 자동 저장은 되지만 브라우저 안에만) ----
 const colorDirty=new Set(readStore(LS_DIRTY,[]));
 const BACKUP_WARN_SLIDES=15;              // 이만큼 보정했는데 백업이 없으면 경고
 const BACKUP_WARN_MS=20*60*1000;          // 마지막 백업 후 이 시간이 지나면 경고(보정이 쌓인 경우)
@@ -564,12 +642,13 @@ function updateSaveBar(){
   const meta=backupMeta(),pend=colorDirty.size;
   const age=meta.at?(Date.now()-meta.at):null;
   const ss=document.getElementById('saveState');
-  if(ss)ss.textContent=pend?('💾 자동 저장됨 · 미백업 '+pend+'장'):'💾 자동 저장됨';
+  if(ss)ss.textContent=pend?('자동 저장됨 · 미백업 '+pend+'장'):'자동 저장됨';
   const el=document.getElementById('backupAge');
   if(el)el.textContent=meta.at?('· 마지막 백업: '+fmtAge(age)):'· 백업한 적 없음';
   // 경고: 백업이 없는데 보정이 쌓였거나, 백업 후 시간이 많이 지났는데 미백업분이 있을 때
   const stale=pend>0&&(!meta.at||pend>=BACKUP_WARN_SLIDES||age>BACKUP_WARN_MS);
   bar.classList.toggle('stale',!!stale);
+  const nb=document.getElementById('backupNowBtn');if(nb)nb.classList.toggle('primary',!!stale);   // 백업이 밀렸으면 백업 버튼을 주 실행으로
 }
 function importBackup(files){
   const f=files&&files[0];if(!f)return;
@@ -586,10 +665,10 @@ function importBackup(files){
 }
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function validateGroupName(raw){
-  if(typeof raw!=='string')return {ok:false,reason:'그룹 이름은 문자열이어야 합니다.'};
+  if(typeof raw!=='string')return {ok:false,reason:'발표 이름은 문자열이어야 합니다.'};
   const value=raw.normalize('NFC');
-  if(!value||value==='.'||value==='..'||value.includes('\0'))return {ok:false,reason:'비어 있지 않은 단일 그룹 이름을 입력하세요.'};
-  if(value.includes('/')||value.includes('\\')||/^[A-Za-z]:/.test(value))return {ok:false,reason:'경로가 아닌 그룹 이름만 입력하세요.'};
+  if(!value||value==='.'||value==='..'||value.includes('\0'))return {ok:false,reason:'비어 있지 않은 발표 이름을 입력하세요.'};
+  if(value.includes('/')||value.includes('\\')||/^[A-Za-z]:/.test(value))return {ok:false,reason:'경로가 아닌 발표 이름만 입력하세요.'};
   if(value.startsWith('.'))return {ok:false,reason:'점으로 시작하는 이름은 사용할 수 없습니다.'};
   if(value.startsWith('_'))return {ok:false,reason:'밑줄(_)로 시작하는 이름은 보관용이라 사용할 수 없습니다.'};
   if(Array.from(value).some(ch=>{const code=ch.charCodeAt(0);return code<32||(code>=127&&code<=159);}))return {ok:false,reason:'제어 문자는 사용할 수 없습니다.'};
@@ -670,17 +749,41 @@ function cloneCorners(c){return c.map(p=>[+p[0],+p[1]]);}
 function currentSlide(){return curFolder?DATA[curFolder][curIndex]:null;}
 function getCorners(file){return cloneCorners(cornersStore[file]||DEFAULT_CORNERS);}
 function setCorners(file,corners){cornersStore[file]=corners.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]);writeStore(LS_CORNERS,cornersStore);}
-// 짧은 알림. 연쇄 이동처럼 **한 번에 여러 장이 바뀌는** 동작은 결과를 말해 주지 않으면
+// 캔버스 그림은 CSS 를 못 읽으므로 :root 토큰에서 색을 꺼내 쓴다(토큰이 바뀌면 그림도 따라간다).
+function tokenColor(name){return getComputedStyle(document.documentElement).getPropertyValue(name).trim();}
+// 짧은 알림(하단 중앙 알약). 연쇄 이동처럼 **한 번에 여러 장이 바뀌는** 동작은 결과를 말해 주지 않으면
 // 사용자가 무슨 일이 일어났는지 모른다.
 let _toastTimer=null;
 function toast(msg,ms){
   let el=document.getElementById('toastBox');
-  if(!el){el=document.createElement('div');el.id='toastBox';document.body.appendChild(el);}
+  if(!el){el=document.createElement('div');el.id='toastBox';el.className='toast';el.setAttribute('role','status');el.setAttribute('aria-live','polite');document.body.appendChild(el);}
   el.textContent=msg;el.classList.add('show');
   clearTimeout(_toastTimer);
   _toastTimer=setTimeout(()=>el.classList.remove('show'),ms||3600);
 }
 function statusFor(file){return statusStore[file]||{};}
+// 사진 상태는 하나만 보여 준다: 제외 > 확인 필요 > 완료 > 자동 > 미작업 (발표자료는 '자료').
+// 자동 = 자동 찾기로 경계를 넣었고 아직 손대지 않은 것(status.auto). 손으로 고치거나 완료 표시하면 내려간다.
+const STATE_LABEL={deck:'자료',ex:'제외',review:'확인 필요',done:'완료',auto:'자동',todo:'미작업'};
+const STATE_HINT={
+  review:'자동 찾기 결과가 확실하지 않거나 찾지 못했습니다 — 경계를 확인하세요',
+  auto:'자동으로 찾은 경계입니다 — 확인한 뒤 완료 표시하세요',
+  todo:'아직 완료 표시하지 않았습니다',
+  deck:'발표자료 원본 — 그대로 PDF에 들어갑니다'
+};
+function photoState(file){
+  if(isDeck(file))return 'deck';
+  const st=statusFor(file);
+  if(st.excluded)return 'ex';
+  if(st.review)return 'review';
+  if(st.done)return 'done';
+  if(st.auto)return 'auto';
+  return 'todo';
+}
+function stateBadge(file){
+  const k=photoState(file);
+  return `<span class="badge ${k}"${STATE_HINT[k]?` title="${STATE_HINT[k]}"`:''}>${STATE_LABEL[k]}</span>`;
+}
 function ratioFor(file){return ratioStore[file]||'16:9';}
 
 function copyCorners(){
@@ -705,7 +808,7 @@ function pasteCorners(){
 
 function updateClipboardUi(){
   document.getElementById('pasteCornersBtn').disabled=!cornerClipboard;
-  document.getElementById('cornerClipboardStatus').textContent=cornerClipboard?'복사됨 · 붙여넣기 가능':'';
+  document.getElementById('cornerClipboardStatus').textContent=cornerClipboard?'경계를 복사했습니다 · 붙여넣기 가능':'';
 }
 
 // ---- 90° 회전 (카메라를 눕혀 찍은 사진 세우기) ----
@@ -764,12 +867,12 @@ function updateBulkRotateUi(){
     btn.disabled=n===0;
     // 라벨은 고정 — 개수를 라벨에 넣으면 폭이 흔들려 '제외 항목 표시' 와 한 줄에 안 들어간다.
     // 대상 장수는 툴팁과 바로 아래 '선택 N개 제외' 줄이 알려준다.
-    btn.title=(n?`선택한 ${n}장을 한꺼번에 `:'목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 슬라이드를 고른 뒤 ')
-      +(id==='bulkRotateCwBtn'?'시계방향':'반시계방향')+' 90° 돌립니다';
+    btn.title=(n?`선택한 ${n}장을 한꺼번에 `:'목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 사진을 고른 뒤 ')
+      +(id==='bulkRotateCwBtn'?'시계 방향':'반시계 방향')+' 90° 돌립니다';
   });
 }
 
-// ---- 슬라이드 경계 자동 찾기 ----
+// ---- 경계 자동 찾기 ----
 // 서버(/api/auto-detect)가 OpenCV 로 사진 안의 스크린 사각형을 찾아 준다. 꼭짓점은 늘 **원본 사진 좌표**이고
 // 순서는 화면에서 본 [TL,TR,BL,BR] 이다. 이미 90° 돌려 세운 사진(코너 배열 순환 = stageRot)은 그 회전 횟수를
 // 서버에 알려 돌려 세운 채로 찾게 하므로, 결과를 그대로 cornersStore 에 넣어도 회전 상태가 유지된다
@@ -789,16 +892,16 @@ function isUntouchedCorners(file){
   return ROTATED_DEFAULTS.some(d=>sameCorners(c,d));
 }
 function clearReview(file){
-  const st=statusStore[file];if(!st||!st.review)return false;
-  const next={...st};delete next.review;
+  const st=statusStore[file];if(!st||(!st.review&&!st.auto))return false;   // 손으로 고치기 시작하면 '확인 필요'·'자동' 표시를 내린다
+  const next={...st};delete next.review;delete next.auto;
   if(Object.keys(next).length)statusStore[file]=next;else delete statusStore[file];
   writeStore(LS_STATUS,statusStore);
   return true;
 }
 function autoDetectAvailability(){
-  if(location.protocol==='file:')return {enabled:false,reason:'시작 파일로 연 워크플로 서버에서만 자동으로 찾을 수 있습니다.'};
+  if(location.protocol==='file:')return {enabled:false,reason:'시작 파일로 연 도구 서버에서만 자동으로 찾을 수 있습니다.'};
   const wf=window.__slideWorkflow;
-  if(!wf||typeof wf.autoDetectAvailability!=='function')return {enabled:false,reason:'워크플로 서버 연결을 확인하는 중입니다.'};
+  if(!wf||typeof wf.autoDetectAvailability!=='function')return {enabled:false,reason:'도구 서버 연결을 확인하는 중입니다.'};
   if(autoDetectBusy)return {enabled:false,reason:'자동 찾기를 진행 중입니다.'};
   return wf.autoDetectAvailability();
 }
@@ -808,14 +911,14 @@ function updateAutoDetectUi(){
   const one=document.getElementById('autoDetectBtn');
   if(one){
     one.disabled=!a.enabled||!slide||isDeck(slide.file);
-    one.textContent=autoDetectBusy?'찾는 중…':'자동 찾기';
-    one.title=a.enabled?'이 사진에서 슬라이드(스크린) 경계를 찾아 네 모서리를 맞춥니다. 어긋나면 손잡이로 고치거나 «찾기 되돌리기»':a.reason;
+    const l=one.querySelector('.lbl');if(l)l.textContent=autoDetectBusy?'찾는 중…':'경계 자동 찾기';
+    one.title=a.enabled?'이 사진에서 슬라이드(스크린) 경계를 찾아 네 모서리를 맞춥니다. 어긋나면 손잡이로 고치거나 «되돌리기»':a.reason;
   }
   const group=document.getElementById('groupAutoDetectBtn');
   if(group){
     group.disabled=!a.enabled||!curFolder;
-    group.textContent=autoDetectBusy?'찾는 중…':'이 그룹 자동 찾기';
-    group.title=a.enabled?'이 그룹 사진의 스크린 경계를 한꺼번에 찾습니다. 이미 손댄(모서리를 고쳤거나 완료 표시한) 사진은 건너뜁니다 — Alt+클릭: 덮어쓰기':a.reason;
+    const l=group.querySelector('.lbl');if(l)l.textContent=autoDetectBusy?'찾는 중…':'이 발표 경계 자동 찾기';
+    group.title=a.enabled?'이 발표 사진의 슬라이드 경계를 한꺼번에 찾습니다. 이미 손댄(경계를 고쳤거나 완료 표시한) 사진은 건너뜁니다 — Alt+클릭: 덮어쓰기':a.reason;
   }
   const undo=document.getElementById('autoUndoBtn');
   if(undo){
@@ -843,7 +946,8 @@ async function runAutoDetect(targets,label){
 }
 
 // 결과를 저장소에 넣는다. writeStore 는 호출마다 저장소 전체를 직렬화하므로 마지막에 한 번씩만 쓴다.
-// 반환 {found, review} — review = 확신이 낮아 확인이 필요하거나(꼭짓점은 넣는다) 아예 못 찾은 장수.
+// 반환 {found, review} — review = 확신이 낮아 확인이 필요하거나(모서리는 넣는다) 아예 못 찾은 장수.
+// 찾은 사진에는 status.auto 를 켠다(사이드바 '자동' 배지) — 손으로 고치거나 완료 표시하면 clearReview·toggleStatus 가 내린다.
 function applyAutoResults(targets,results){
   const items=[];let found=0,review=0;
   targets.forEach(t=>{
@@ -858,7 +962,7 @@ function applyAutoResults(targets,results){
       item.applied=cloneCorners(cornersStore[t.file]);
     }
     const st={...statusFor(t.file)};
-    if(r.review||!okCorners){st.review=true;review++;}else{delete st.review;found++;}
+    if(r.review||!okCorners){st.review=true;delete st.auto;review++;}else{delete st.review;st.auto=true;found++;}
     if(Object.keys(st).length)statusStore[t.file]=st;else delete statusStore[t.file];
     items.push(item);
   });
@@ -883,7 +987,7 @@ async function autoDetectCurrent(){
   const r=results[slide.file];
   const {found}=applyAutoResults([target],results);
   const hasCorners=!!(r&&r.corners);
-  toast(found?'경계를 찾았습니다 — 어긋나면 손잡이로 고치거나 «찾기 되돌리기»'
+  toast(found?'경계를 찾았습니다 — 어긋나면 손잡이로 고치거나 «되돌리기»'
     :hasCorners?'경계를 찾았지만 확실하지 않습니다 — 확인 필요':'경계를 찾지 못했습니다 — 직접 지정하세요',5000);
   updateAutoDetectUi();
 }
@@ -907,7 +1011,7 @@ async function autoDetectGroup(folder,overwrite){
   const done=found+review;
   let msg=`${targets.length}장 중 ${found}장 찾음`+(review?`, ${review}장 확인 필요`:'')+skipNote;
   if(error)msg=`자동 찾기가 중간에 멈췄습니다(${error.detail||error.message}) — ${done}장 처리`+(done?` · ${found}장 찾음, ${review}장 확인 필요`:'');
-  toast(msg+(done?' · «찾기 되돌리기»로 취소':''),8000);
+  toast(msg+(done?' · «되돌리기»로 취소':''),8000);
   updateAutoDetectUi();
 }
 
@@ -931,7 +1035,7 @@ function undoAutoDetect(){
   updateAutoDetectUi();
 }
 
-function toggleNav(){const c=document.body.classList.toggle('navcol');document.getElementById('navToggle').textContent=c?'▶':'◀';}
+function toggleNav(){const c=document.body.classList.toggle('navcol');document.getElementById('navToggle').setAttribute('aria-expanded',c?'false':'true');}
 function toggleShowExcluded(value){showExcluded=value;writeStore(LS_SHOW_EXCLUDED,showExcluded);renderNav();}
 
 function origFolderOf(file){for(const f of folderNames){if((RAW_DATA[f]||[]).some(s=>s.file===file))return f;}return null;}
@@ -1038,7 +1142,7 @@ function resetOrder(folder){
 function moveSlideRel(folder,index,delta){
   const s=(DATA[folder]||[])[index];if(!s)return;
   const tgt=folderNames[folderNames.indexOf(folder)+delta];
-  if(!tgt){alert(delta<0?'이전 화자가 없습니다.':'다음 화자가 없습니다.');return;}
+  if(!tgt){toast(delta<0?'이전 발표가 없습니다.':'다음 발표가 없습니다.');return;}
   // 이동할 슬라이드를 현재 선택으로 잡아 이동 후 추적
   moveSlideToFolder(s.file,tgt);
 }
@@ -1056,13 +1160,14 @@ function renderNav(){
     const c=folderCounts(folder);
     const slides=DATA[folder]||[];
     return `<div class="folder ${folder===curFolder?'':'collapsed'}" data-folder="${esc(folder)}">
-      <button class="folderHead" data-folder="${esc(folder)}">
-        <span>${esc(folder)}</span>
+      <button type="button" class="folderHead" data-folder="${esc(folder)}">
+        <svg class="ic tw twOpen" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg><svg class="ic tw twClosed" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-right"/></svg>
+        <span class="nm">${esc(folder)}</span>
         <span class="folderMeta">${c.done} / ${c.total} 완료 · ${c.excluded} 제외</span>
       </button>
       ${folder===curFolder&&selectedIdx.size?`<div class="bulkActions">
-        <button class="btn sm warn bulkActionBtn" data-folder="${esc(folder)}" data-action="exclude">선택 ${selectedIdx.size}개 제외</button>
-        <button class="btn sm bulkActionBtn" data-folder="${esc(folder)}" data-action="unexclude">선택 ${selectedIdx.size}개 제외 해제</button>
+        <button type="button" class="btn sm danger bulkActionBtn" data-folder="${esc(folder)}" data-action="exclude">선택 ${selectedIdx.size}개 제외</button>
+        <button type="button" class="btn sm bulkActionBtn" data-folder="${esc(folder)}" data-action="unexclude">선택 ${selectedIdx.size}개 제외 해제</button>
       </div>`:''}
       <div class="folderBody">
         ${slides.map((s,i)=>{
@@ -1073,7 +1178,7 @@ function renderNav(){
             folder===curFolder&&selectedIdx.has(i)?'selected':'',
             st.excluded?'excluded':''
           ].join(' ');
-          const state=`${isDeck(s.file)?'<span class="badge deck">자료</span>':''}${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':''}${st.review?'<span class="badge review">확인 필요</span>':''}`;
+          const state=stateBadge(s.file);
           const deck=isDeck(s.file);
           return `<button class="slideItem ${cls} ${deck?'deckItem':''}" draggable="${deck?'false':'true'}" data-folder="${esc(folder)}" data-index="${i}" data-file="${esc(s.file)}" data-deck="${deck?'1':''}">
             <img class="thumb" src="${esc(s.file)}" alt="">
@@ -1131,7 +1236,7 @@ function renderNav(){
     e.preventDefault();
     openCtxMenu(e.clientX,e.clientY,btn.dataset.folder,+btn.dataset.index);
   }));
-  // 드래그로 다른 화자 폴더에 옮기기 — 잡은 사진 **이후 전부**가 함께 간다(Alt 는 한 장만).
+  // 드래그로 다른 발표에 옮기기 — 잡은 사진 **이후 전부**가 함께 간다(Alt 는 한 장만).
   root.querySelectorAll('.slideItem').forEach(btn=>{
     btn.addEventListener('dragstart',e=>{
       if(btn.dataset.deck){e.preventDefault();return;}   // 발표자료는 위치 고정
@@ -1200,7 +1305,7 @@ function renderNav(){
       if(tgt===slidesFromHere(file).folder)return;
       e.preventDefault();
       const n=e.altKey?(moveSlideToFolder(file,tgt),1):moveSlideAndAfterToFolder(file,tgt);
-      if(n>1)toast(`${n}장을 «${tgt}» 로 옮겼습니다 (되돌리려면 첫 장을 원래 그룹으로 다시 끌어놓으세요)`);
+      if(n>1)toast(`${n}장을 «${tgt}» 발표로 옮겼습니다 (되돌리려면 첫 장을 원래 발표로 다시 끌어놓으세요)`);
     });
   });
   updateBulkRotateUi();   // 일괄 회전 버튼은 이 innerHTML 재렌더 범위 밖이라 따로 갱신한다
@@ -1217,8 +1322,8 @@ function selectSlide(folder,index){
 function loadSlide(){
   const slide=currentSlide();
   updateAutoDetectUi();
-  document.getElementById('empty').style.display=slide?'none':'block';
-  document.getElementById('editor').style.display=slide?'block':'none';
+  document.getElementById('empty').hidden=!!slide;
+  document.getElementById('editor').hidden=!slide;
   if(!slide)return;
   document.getElementById('title').textContent=slide.name;
   const time=[slide.start_hhmmss,slide.end_hhmmss].filter(Boolean).join(' - ');
@@ -1253,15 +1358,15 @@ function loadSlide(){
 function updateStatusUi(){
   const slide=currentSlide();if(!slide)return;
   const st=statusFor(slide.file);
-  document.getElementById('doneBtn').classList.toggle('on',!!st.done);
-  document.getElementById('excludeBtn').classList.toggle('on',!!st.excluded);
-  document.getElementById('statusBadges').innerHTML=`${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':'<span class="badge">검수 대상</span>'}${st.review?'<span class="badge review" title="자동 찾기 결과가 확실하지 않거나 찾지 못했습니다 — 모서리를 확인하세요">확인 필요</span>':''}`;
+  document.getElementById('doneBtn').setAttribute('aria-pressed',st.done?'true':'false');
+  document.getElementById('excludeBtn').setAttribute('aria-pressed',st.excluded?'true':'false');
+  document.getElementById('statusBadges').innerHTML=stateBadge(slide.file);
 }
 
 function updateRatioButtons(){
   const slide=currentSlide();if(!slide)return;
   const r=ratioFor(slide.file);
-  document.querySelectorAll('.ratioBtn').forEach(btn=>btn.classList.toggle('on',btn.dataset.ratio===r));
+  document.querySelectorAll('.ratioBtn').forEach(btn=>btn.setAttribute('aria-checked',btn.dataset.ratio===r?'true':'false'));
 }
 
 document.querySelectorAll('.ratioBtn').forEach(btn=>btn.onclick=()=>{
@@ -1274,7 +1379,7 @@ function toggleStatus(key){
   const slide=currentSlide();if(!slide)return;
   const st=statusStore[slide.file]||{};
   st[key]=!st[key];
-  if(key==='done'&&st.done)delete st.review;   // 확인을 마쳤다는 뜻 — '확인 필요' 표시를 내린다
+  if(key==='done'&&st.done){delete st.review;delete st.auto;}   // 확인을 마쳤다는 뜻 — '확인 필요'·'자동' 표시를 내린다
   statusStore[slide.file]=st;
   writeStore(LS_STATUS,statusStore);
   updateStatusUi();renderNav();
@@ -1311,11 +1416,11 @@ function openCtxMenu(x,y,folder,index){
   // ⚠️ 회전 항목은 반드시 data-rot 로 — 아래 `querySelector('[data-action]')` 는 단수 셀렉터라
   //    회전 버튼에도 data-action 을 달면 제외 핸들러가 엉뚱한 버튼에 붙는다.
   menu.innerHTML=`<button class="ctxMenuBtn" data-action="${action}">${label}</button>`
-    +`<button class="ctxMenuBtn" data-rot="1">${moveLabel}⟳ 시계 90° 회전</button>`
-    +`<button class="ctxMenuBtn" data-rot="-1">${moveLabel}⟲ 반시계 90° 회전</button>`
+    +`<button class="ctxMenuBtn" data-rot="1">${moveLabel}시계 방향 90° 돌리기</button>`
+    +`<button class="ctxMenuBtn" data-rot="-1">${moveLabel}반시계 방향 90° 돌리기</button>`
     +((prevF||nextF)?'<div class="ctxSep"></div>':'')
-    +(prevF?`<button class="ctxMenuBtn" data-move="-1">◀ ${moveLabel}이전 화자로 (${esc(prevF)})</button>`:'')
-    +(nextF?`<button class="ctxMenuBtn" data-move="1">${moveLabel}다음 화자로 ▶ (${esc(nextF)})</button>`:'');
+    +(prevF?`<button class="ctxMenuBtn" data-move="-1">${moveLabel}이전 발표로 옮기기 (${esc(prevF)})</button>`:'')
+    +(nextF?`<button class="ctxMenuBtn" data-move="1">${moveLabel}다음 발표로 옮기기 (${esc(nextF)})</button>`:'');
   menu.querySelector('[data-action]').onclick=()=>{
     bulkSetExcluded(folder,targetIndices,value);
     closeCtxMenu();
@@ -1345,7 +1450,7 @@ function openFolderCtxMenu(x,y,folder){
   menu.id='folderCtxMenu';menu.className='ctxMenu';menu.style.left=x+'px';menu.style.top=y+'px';
   const availability=window.__slideWorkflow&&typeof window.__slideWorkflow.renameAvailability==='function'
     ?window.__slideWorkflow.renameAvailability()
-    :{enabled:false,reason:'워크플로 서버 연결을 확인하는 중입니다.'};
+    :{enabled:false,reason:'도구 서버 연결을 확인하는 중입니다.'};
   const renameBtn=document.createElement('button');
   renameBtn.type='button';renameBtn.textContent='이름 변경';renameBtn.disabled=!availability.enabled;
   if(!availability.enabled)renameBtn.title=availability.reason;
@@ -1353,7 +1458,7 @@ function openFolderCtxMenu(x,y,folder){
   menu.appendChild(renameBtn);
   const detect=autoDetectAvailability();
   const detectBtn=document.createElement('button');
-  detectBtn.type='button';detectBtn.textContent='이 그룹 자동 찾기';detectBtn.disabled=!detect.enabled;
+  detectBtn.type='button';detectBtn.textContent='이 발표 경계 자동 찾기';detectBtn.disabled=!detect.enabled;
   detectBtn.title=detect.enabled?'이미 손댄 사진은 건드리지 않습니다 (Alt+클릭: 덮어쓰기)':detect.reason;
   detectBtn.onclick=e=>{const overwrite=e.altKey;closeFolderCtxMenu();autoDetectGroup(folder,overwrite);};
   menu.appendChild(detectBtn);
@@ -1378,7 +1483,7 @@ function startGroupRename(folder){
   const box=Array.from(document.querySelectorAll('.folder')).find(node=>node.dataset.folder===folder);
   const head=box&&box.querySelector('.folderHead');if(!head)return;
   const form=document.createElement('form');form.className='folderHead folderRename';
-  const input=document.createElement('input');input.type='text';input.value=folder;input.setAttribute('aria-label','새 그룹 이름');
+  const input=document.createElement('input');input.type='text';input.value=folder;input.setAttribute('aria-label','새 발표 이름');
   const error=document.createElement('span');error.className='folderRenameError';error.setAttribute('role','alert');
   form.appendChild(input);form.appendChild(error);head.replaceWith(form);
   const cancel=()=>renderNav();
@@ -1389,9 +1494,9 @@ function startGroupRename(folder){
     if(!checked.ok){error.textContent=checked.reason;input.focus();return;}
     const target=checked.value;
     if(target===folder){cancel();return;}
-    if(folderNames.some(name=>name.normalize('NFC')===target.normalize('NFC'))){error.textContent='같은 이름의 그룹이 이미 있습니다.';input.focus();return;}
+    if(folderNames.some(name=>name.normalize('NFC')===target.normalize('NFC'))){error.textContent='같은 이름의 발표가 이미 있습니다.';input.focus();return;}
     const workflow=window.__slideWorkflow;
-    if(!workflow||typeof workflow.renameGroup!=='function'){error.textContent='워크플로 서버에서만 이름을 바꿀 수 있습니다.';return;}
+    if(!workflow||typeof workflow.renameGroup!=='function'){error.textContent='도구 서버에서만 이름을 바꿀 수 있습니다.';return;}
     input.disabled=true;error.textContent='이름을 바꾸는 중입니다…';
     try{
       const result=await workflow.renameGroup(folder,target);
@@ -1400,7 +1505,7 @@ function startGroupRename(folder){
       catch(storageError){
         let rollbackFailed=false;
         try{await workflow.renameGroup(to,from);}catch(_rollbackError){rollbackFailed=true;}
-        showStoreFail('⚠️ 그룹 이름 저장소 이관에 실패했습니다. '+(rollbackFailed?'폴더 복구도 실패했으므로 도구를 닫지 말고 백업을 내보내세요.':'폴더 이름은 원래대로 복구했습니다.'));
+        showStoreFail('발표 이름 저장소 이관에 실패했습니다. '+(rollbackFailed?'폴더 복구도 실패했으므로 도구를 닫지 말고 백업을 내보내세요.':'폴더 이름은 원래대로 복구했습니다.'));
         throw new Error('브라우저 저장소를 옮기지 못했습니다: '+storageError.message);
       }
       let fresh;
@@ -1540,14 +1645,17 @@ function drawQuad(corners){
   const ctx=cv.getContext('2d');
   ctx.clearRect(0,0,cv.width,cv.height);
   if(!rect.w||!rect.h)return;
-  ctx.strokeStyle='#2563eb';ctx.fillStyle='rgba(37,99,235,.10)';ctx.lineWidth=2;
+  const primary=tokenColor('--primary');
+  ctx.strokeStyle=primary;ctx.fillStyle=primary;ctx.lineWidth=2.5;
   ctx.beginPath();
   [[0,1],[1,3],[3,2],[2,0]].forEach(([a,b],i)=>{
     const p=corners[a],q=corners[b];
     if(i===0)ctx.moveTo(p[0]*rect.w,p[1]*rect.h);
     ctx.lineTo(q[0]*rect.w,q[1]*rect.h);
   });
-  ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.closePath();
+  ctx.globalAlpha=.14;ctx.fill();ctx.globalAlpha=1;   // 안쪽은 연하게, 선은 또렷하게
+  ctx.stroke();
 }
 
 function cross(a,b,c){return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);}
@@ -1709,7 +1817,7 @@ function solve(A,b){
   return M.map(row=>row[n]);
 }
 
-// ===================== 🎨 수동 색보정 (PhotoScape식) =====================
+// ===================== 수동 색보정 (PhotoScape식) =====================
 // ===COLOR_CORE_START===  (JS↔Python 동일 색연산. 이 블록은 node 파리티 테스트가 그대로 추출·실행하므로
 //                          함수 순수성 유지: DOM/localStorage 접근 금지. Python: color_render.apply_manual_color 와 동일 순서·수식)
 const COLOR_DEFS=[
@@ -1825,16 +1933,23 @@ function clusterOf(file){return clusterByFile[String(file||'').normalize('NFC')]
 
 // ---- 슬라이더 UI ----
 function fmtVal(v,d){return (d.step<1)?(+v).toFixed(2):String(+v);}
+// 화면에 보이는 이름·설명. COLOR_DEFS 는 파리티 검사 대상 블록이라 건드리지 않고 여기서만 바꿔 쓴다.
+const COLOR_LABEL_OVERRIDE={temp:'색온도',tint:'색조'};
+const COLOR_HINT={
+  temp:'오른쪽으로 갈수록 따뜻한(붉은) 색, 왼쪽으로 갈수록 차가운(푸른) 색',
+  tint:'오른쪽으로 갈수록 초록빛, 왼쪽으로 갈수록 붉은 보라빛(마젠타)'
+};
+function colorLabel(d){return COLOR_LABEL_OVERRIDE[d.k]||d.label;}
 function buildColorSliders(){
   const grid=document.getElementById('sliderGrid');if(!grid)return;
   // hidden:true (자동레벨 rLo..bHi 6개)는 슬라이더로 노출하지 않는다 — 자동 레벨 버튼이 계산해 넣고,
-  // 해제는 ↺(autoLevelsReset) 로 한다. refreshColorSliders 는 행이 없으면 건너뛴다.
+  // 해제는 '해제' 버튼(autoLevelsReset) 으로 한다. refreshColorSliders 는 행이 없으면 건너뛴다.
   grid.innerHTML=COLOR_DEFS.filter(d=>!d.hidden).map(d=>`
     <div class="sliderRow ${d.py?'py':''}" data-k="${d.k}">
-      <label>${d.label}${d.py?'<span class="pybadge" title="미리보기는 약식 근사 · 최종 PDF(파이썬)에서 정밀 적용">PY≈</span>':''}</label>
+      <label${COLOR_HINT[d.k]?` title="${COLOR_HINT[d.k]}"`:''}>${colorLabel(d)}${d.py?'<span class="badge" title="미리보기에서는 대략만 보입니다 — PDF를 만들 때 정확히 적용됩니다">PDF 반영</span>':''}</label>
       <input type="range" min="${d.min}" max="${d.max}" step="${d.step}" data-k="${d.k}" oninput="onSliderInput('${d.k}',this.value)">
       <span class="val" id="val_${d.k}"></span>
-      <button class="rst" title="이 항목만 기본값으로" onclick="resetOne('${d.k}')">↺</button>
+      <button type="button" class="btn ghost sm icon" title="이 항목만 원래대로" aria-label="${colorLabel(d)} 원래대로" onclick="resetOne('${d.k}')"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-undo"/></svg></button>
     </div>`).join('');
 }
 function refreshColorSliders(){
@@ -1850,13 +1965,13 @@ function updateColorClusterLabel(){
   const slide=currentSlide();const el=document.getElementById('colorCluster');if(!el)return;
   if(!slide){el.textContent='';return;}
   const cl=clusterOf(slide.file),custom=!isDefaultColor(getColor(slide.file));
-  el.textContent=`· 군집: ${cl||'미상'}${custom?' · 수동값 적용됨':' · 기본(원본)'}`;
+  el.textContent=(cl?`· 군집: ${cl}`:'')+(custom?' · 수동값 적용됨':' · 기본(원본)');
 }
 // renderUndoUI 포함 — 되돌리기 버튼의 남은 스텝수는 슬라이드별이라 슬라이드 전환(loadSlide)마다 갱신돼야 한다.
 function refreshColorUi(){refreshColorSliders();updateColorClusterLabel();updateAutoLevelUi();updateSaveBar();renderUndoUI();}
-function setColorMsg(t){const el=document.getElementById('colorMsg');if(el)el.textContent=t;}
+function setColorMsg(t){const el=document.getElementById('colorMsg');if(!el)return;el.textContent=t||'';el.hidden=!t;}
 
-// ===================== ↩︎ 되돌리기 (슬라이드별 독립 스택 · 슬라이드당 최대 100스텝) =====================
+// ===================== 되돌리기 (사진별 독립 스택 · 사진당 최대 100스텝) =====================
 // 작업 이력은 "한 화면(같은 슬라이드) 안에서만" 관리한다 → 스택을 파일별로 나눈다.
 // 그래서 Ctrl+Z 는 언제나 "지금 보고 있는 이 슬라이드"의 마지막 동작만 되돌린다
 // (화면 밖 슬라이드가 조용히 바뀌는 일이 없다). 다른 장은 그 장으로 가서 되돌린다.
@@ -1889,7 +2004,7 @@ function doUndo(){
   const snap=st.pop();
   setColorObj(slide.file,snap.prev);     // prev 가 기본값이면 setColorObj 가 항목을 지운다(= 원본 상태 복원)
   refreshColorUi();scheduleRender();     // refreshColorUi 안에서 renderUndoUI 가 다시 그린다
-  setColorMsg(`↩︎ 되돌림: ${snap.label} · 남은 ${st.length}스텝`);
+  setColorMsg(`되돌렸습니다: ${snap.label} · 남은 ${st.length}스텝`);
 }
 // 남은 스텝 수는 항상 "현재 슬라이드" 기준이다 → refreshColorUi(=슬라이드 전환 시 호출됨)가 부른다.
 function renderUndoUI(){
@@ -1898,11 +2013,11 @@ function renderUndoUI(){
   const st=(slide&&undoStacks[slide.file])||[];
   const n=st.length;
   b.disabled=!n;
-  // 라벨은 고정('↩︎ 되돌리기') — 남은 스텝수는 툴팁으로. 라벨에 넣으면 autoBar 가 접히고 폭이 흔들린다.
+  // 라벨은 고정('되돌리기') — 남은 스텝수는 툴팁으로. 라벨에 넣으면 autoBar 가 접히고 폭이 흔들린다.
   b.title=n
-    ?`이 슬라이드의 마지막 동작을 되돌립니다: ${st[n-1].label}\n`
-     +`${n}스텝 남음 (슬라이드마다 따로 · 최대 ${UNDO_MAX}스텝 · 새로고침하면 비워집니다)\nCtrl+Z / ⌘Z`
-    :'이 슬라이드에는 되돌릴 동작이 없습니다\nCtrl+Z / ⌘Z';
+    ?`이 사진의 마지막 동작을 되돌립니다: ${st[n-1].label}\n`
+     +`${n}스텝 남음 (사진마다 따로 · 최대 ${UNDO_MAX}스텝 · 새로고침하면 비워집니다)\nCtrl+Z / ⌘Z`
+    :'이 사진에는 되돌릴 동작이 없습니다\nCtrl+Z / ⌘Z';
 }
 // 텍스트 입력류에서만 브라우저 기본 undo 에 양보한다.
 // range 슬라이더는 기본 undo 가 없고, 드래그 직후 포커스가 슬라이더에 남으므로
@@ -1934,17 +2049,17 @@ function onSliderInput(k,v){
 function resetOne(k){
   const slide=currentSlide();if(!slide)return;
   const d=COLOR_DEFS.find(x=>x.k===k);
-  pushUndoCur(`${d?d.label:k} 초기화`);
+  pushUndoCur(`${d?colorLabel(d):k} 원래대로`);
   const c=getColor(slide.file);c[k]=DEFAULT_COLOR[k];setColorObj(slide.file,c);
   refreshColorSliders();updateColorClusterLabel();scheduleRender();
 }
 // ⚠️ setColorObj 를 거치지 않고 colorStore 를 직접 지운다 → grep 'setColorObj' 로는 안 잡히는 변경점.
 function resetColor(){
   const slide=currentSlide();if(!slide)return;
-  pushUndoCur('원본 리셋');
+  pushUndoCur('원래대로');
   delete colorStore[slide.file];writeStore(LS_COLOR,colorStore);
   markColorDirty(slide.file);              // 리셋도 백업해야 할 변경이다
-  refreshColorUi();scheduleRender();setColorMsg('원본 리셋됨 (자동 레벨 포함 전부 해제)');
+  refreshColorUi();scheduleRender();setColorMsg('원래대로 돌렸습니다 (자동 레벨 포함 전부 해제)');
 }
 // classification.json 군집 자동 파라미터 → 슬라이더값 근사(자동값 불러오기)
 function clusterPresetFor(cl){
@@ -1962,10 +2077,10 @@ function clusterPresetFor(cl){
 function loadClusterPreset(){
   const slide=currentSlide();if(!slide)return;
   const cl=clusterOf(slide.file),preset=clusterPresetFor(cl);
-  if(!preset){setColorMsg(clusterParams?('군집 정보 없음('+(cl||'미상')+')'):'classification.json 로드 안됨');return;}
-  pushUndoCur('자동값(군집) 불러오기');    // 실제로 값이 바뀌는 지점에서만 — 위 조기 return 뒤
+  if(!preset){setColorMsg(clusterParams?'이 사진의 군집 정보가 없습니다':'군집 정보를 불러오지 못했습니다');return;}
+  pushUndoCur('자동값 불러오기');    // 실제로 값이 바뀌는 지점에서만 — 위 조기 return 뒤
   setColorObj(slide.file,preset);refreshColorUi();scheduleRender();
-  setColorMsg(`군집 '${cl}' 자동값 불러옴`);
+  setColorMsg(`군집 '${cl}' 자동값을 불러왔습니다`);
 }
 // 일괄 적용
 function targetFilesFor(scope){
@@ -1980,32 +2095,39 @@ function targetFilesFor(scope){
 }
 function applyColorTo(scope){
   const slide=currentSlide();if(!slide)return;
-  if(scope==='cluster'&&!clusterOf(slide.file)){setColorMsg('군집 정보 없음(classification.json)');return;}
+  if(scope==='cluster'&&!clusterOf(slide.file)){setColorMsg('이 사진의 군집 정보가 없습니다');return;}
   const src=getColor(slide.file),files=targetFilesFor(scope);
-  const lbl={speaker:'이 화자 전체',cluster:'같은 군집 전체',all:'전체'}[scope]||scope;
-  pushUndo(lbl,files);    // 대상 각 장의 스택에 덮어쓰기 *전* 값을 1스텝씩 (되돌리기는 슬라이드별)
+  const lbl={speaker:'이 발표 전체',cluster:'같은 군집 전체',all:'모든 사진'}[scope]||scope;
+  pushUndo(lbl,files);    // 대상 각 장의 스택에 덮어쓰기 *전* 값을 1스텝씩 (되돌리기는 사진별)
   let n=0;files.forEach(f=>{setColorObj(f,src);n++;});
   scheduleRender();updateColorClusterLabel();
-  setColorMsg(`${lbl} ${n}장에 적용됨 · ↩︎ 되돌리기(Ctrl+Z)는 슬라이드마다 따로 적용됩니다`);
+  setColorMsg(`${lbl} ${n}장에 적용했습니다 · 되돌리기(Ctrl+Z)는 사진마다 따로 적용됩니다`);
 }
 // 모드/미리보기 토글
 function toggleColorMode(){
   colorMode=!colorMode;
   document.body.classList.toggle('colormode',colorMode);
-  document.getElementById('colorModeBtn').classList.toggle('on',colorMode);
-  if(!colorMode){setEyedropper(false);colorShowOriginal=false;const ba=document.getElementById('beforeAfterBtn');if(ba){ba.classList.remove('on');ba.textContent='원본 비교';}}
+  syncModeSeg();
+  if(!colorMode){setEyedropper(false);colorShowOriginal=false;const ba=document.getElementById('beforeAfterBtn');if(ba){ba.setAttribute('aria-pressed','false');const l=ba.querySelector('.lbl');if(l)l.textContent='원본 비교';}}
   if(!colorMode){layoutStage();positionHandles();}   // 숨겨진 동안 잰 크기(0)로 남은 상자·사각형 되살리기
   refreshColorUi();scheduleRender();
+}
+// 경계 | 색보정 세그먼트가 부르는 진입점 — 이미 그 모드면 아무 것도 하지 않는다.
+function setColorMode(on){if(colorMode!==!!on)toggleColorMode();}
+function syncModeSeg(){
+  const e=document.getElementById('edgeModeBtn'),c=document.getElementById('colorModeBtn');
+  if(e)e.setAttribute('aria-selected',colorMode?'false':'true');
+  if(c)c.setAttribute('aria-selected',colorMode?'true':'false');
 }
 function toggleBeforeAfter(){
   colorShowOriginal=!colorShowOriginal;
   const btn=document.getElementById('beforeAfterBtn');
-  btn.classList.toggle('on',colorShowOriginal);btn.textContent=colorShowOriginal?'보정 후 보기':'원본 비교';
+  btn.setAttribute('aria-pressed',colorShowOriginal?'true':'false');const l=btn.querySelector('.lbl');if(l)l.textContent=colorShowOriginal?'보정 후 보기':'원본 비교';
   scheduleRender();
 }
 function toggleZoom(){
   const wrap=document.getElementById('previewWrap');const on=wrap.classList.toggle('zoom100');
-  document.getElementById('zoomBtn').classList.toggle('on',on);
+  document.getElementById('zoomBtn').setAttribute('aria-pressed',on?'true':'false');
 }
 
 // ===== 슬라이더 격자 유틸 (COLOR_DEFS 의 min/max/step 을 단일 출처로 사용) =====
@@ -2019,12 +2141,12 @@ function quantToDef(k,v){
 }
 function wasClamped(k,v){const d=COLOR_DEFS.find(x=>x.k===k);return !!d&&(v<d.min-1e-9||v>d.max+1e-9);}
 
-// ===== 💧 화이트밸런스 스포이드 =====
+// ===== 화이트밸런스 스포이드 =====
 let eyedropOn=false;
 function setEyedropper(on){
   eyedropOn=!!on;
   document.body.classList.toggle('eyedropping',eyedropOn);
-  const b=document.getElementById('eyedropBtn');if(b)b.classList.toggle('on',eyedropOn);
+  const b=document.getElementById('eyedropBtn');if(b)b.setAttribute('aria-pressed',eyedropOn?'true':'false');
 }
 function toggleEyedropper(){
   setEyedropper(!eyedropOn);
@@ -2070,12 +2192,12 @@ function eyedropAt(clientX,clientY){
   c.temp=temp;c.tint=tint;setColorObj(slide.file,c);    // 나머지 파라미터는 보존
   refreshColorUi();scheduleRender();
   setColorMsg((wasClamped('temp',rawTemp)||wasClamped('tint',rawTint))
-    ?`색편차 큼 — 부분 보정 (색온도 ${temp} / 색조 ${tint} · 요구값 ${Math.round(rawTemp)}/${Math.round(rawTint)})`
-    :`화이트밸런스 적용: 색온도 ${temp} / 색조 ${tint} (밝기·대비 변경 시 재클릭)`);
+    ?`색 치우침이 커서 일부만 보정했습니다 (색온도 ${temp} / 색조 ${tint} · 필요한 값 ${Math.round(rawTemp)}/${Math.round(rawTint)})`
+    :`화이트밸런스를 적용했습니다 (색온도 ${temp} / 색조 ${tint}) — 밝기·대비를 바꾸면 다시 클릭하세요`);
   setEyedropper(false);    // 원샷
 }
 
-// ===== 📊 레벨 그래프 — 기존 blackPct/whitePct/gamma 의 두 번째 뷰(신규 저장소 없음) =====
+// ===== 레벨 그래프 — 기존 blackPct/whitePct/gamma 의 두 번째 뷰(신규 저장소 없음) =====
 const LG_W=256,LG_H=120,LG_PLOT=100;    // 하단 20px = 핸들 스트립
 let histSrcCache={key:null,data:null};
 let lgHist=null,lgN=0,lgDrag=null,lgRef=null;
@@ -2131,25 +2253,30 @@ function drawLevelGraph(){
   ctx.clearRect(0,0,LG_W,LG_H);
   if(!colorMode)return;                       // 색보정 모드 밖에선 축소워프 비용도 들이지 않는다
   computeLevelHist();
-  ctx.fillStyle='#f8fafc';ctx.fillRect(0,0,LG_W,LG_PLOT);
-  ctx.fillStyle='#eef2f7';ctx.fillRect(0,LG_PLOT,LG_W,LG_H-LG_PLOT);
-  if(!lgHist){ctx.fillStyle='#94a3b8';ctx.font='11px sans-serif';ctx.fillText('이미지 로딩 중…',8,20);return;}
+  const C={plot:tokenColor('--surface-2'),strip:tokenColor('--surface-3'),bar:tokenColor('--muted'),ink:tokenColor('--text'),line:tokenColor('--text-2'),
+    white:tokenColor('--surface'),danger:tokenColor('--danger'),primary:tokenColor('--primary')};
+  ctx.fillStyle=C.plot;ctx.fillRect(0,0,LG_W,LG_PLOT);
+  ctx.fillStyle=C.strip;ctx.fillRect(0,LG_PLOT,LG_W,LG_H-LG_PLOT);
+  if(!lgHist){ctx.fillStyle=C.bar;ctx.font='12px '+getComputedStyle(document.body).fontFamily;ctx.fillText('이미지 로딩 중…',8,20);return;}
   let mx=0;for(let i=0;i<256;i++)if(lgHist[i]>mx)mx=lgHist[i];
   if(mx>0){
-    ctx.fillStyle='#94a3b8';
+    ctx.fillStyle=C.bar;
     for(let i=0;i<256;i++){
       const hgt=Math.sqrt(lgHist[i]/mx)*(LG_PLOT-4);   // √스케일: 슬라이드 배경 스파이크에 눌리지 않게
       if(hgt>0)ctx.fillRect(i,LG_PLOT-hgt,1,hgt);
     }
   }
   const H=levelHandles();if(!H)return;
-  ctx.fillStyle='rgba(185,28,28,.10)';ctx.fillRect(0,0,H.vB,LG_PLOT);              // 블랙 클리핑 구간
-  ctx.fillStyle='rgba(37,99,235,.10)';ctx.fillRect(H.vW,0,LG_W-H.vW,LG_PLOT);      // 화이트 클리핑 구간
-  [[H.vB,'#0f172a'],[H.vM,'#94a3b8'],[H.vW,'#ffffff']].forEach(([v,col])=>{
-    ctx.strokeStyle='rgba(51,65,85,.45)';ctx.lineWidth=1;
+  ctx.globalAlpha=.10;
+  ctx.fillStyle=C.danger;ctx.fillRect(0,0,H.vB,LG_PLOT);              // 블랙 클리핑 구간
+  ctx.fillStyle=C.primary;ctx.fillRect(H.vW,0,LG_W-H.vW,LG_PLOT);     // 화이트 클리핑 구간
+  ctx.globalAlpha=1;
+  [[H.vB,C.ink],[H.vM,C.bar],[H.vW,C.white]].forEach(([v,col])=>{
+    ctx.globalAlpha=.45;ctx.strokeStyle=C.line;ctx.lineWidth=1;
     ctx.beginPath();ctx.moveTo(v+.5,0);ctx.lineTo(v+.5,LG_PLOT);ctx.stroke();
+    ctx.globalAlpha=1;
     ctx.beginPath();ctx.moveTo(v,LG_PLOT+2);ctx.lineTo(v-5,LG_H-2);ctx.lineTo(v+5,LG_H-2);ctx.closePath();
-    ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#334155';ctx.stroke();
+    ctx.fillStyle=col;ctx.fill();ctx.strokeStyle=C.line;ctx.stroke();
   });
 }
 function lgValueFromEvent(e){
@@ -2221,10 +2348,10 @@ function autoContrast(){
   c.blackPct=0.5;c.whitePct=99.5;
   setColorObj(slide.file,c);
   refreshColorUi();scheduleRender();
-  setColorMsg('자동 콘트라스트: 상·하위 0.5% 클립 (RGB 공통 · 색은 그대로)');
+  setColorMsg('자동 콘트라스트를 적용했습니다 — 색은 그대로, 명암만 살렸습니다');
 }
 
-// ===================== ⚡ 자동 보정 4종 =====================
+// ===================== 자동 보정 4종 =====================
 // 설계 원칙: 측정은 코어 밖(축소 워프 버퍼)에서, 적용은 코어 안(고정 상수)에서.
 //  · 자동 레벨   → 신규 6파라미터(rLo..bHi) = 코어 6b 단계        ⇒ 파리티 케이스로 검증됨
 //  · 나머지 3종  → 기존 파라미터(blackPct/whitePct/temp/tint)에 씀 ⇒ 코어 불변, 파리티 무영향
@@ -2236,8 +2363,8 @@ function isAutoLevelOn(c){return Object.keys(AUTOLV_OFF).some(k=>c[k]!==AUTOLV_O
 function updateAutoLevelUi(){
   const slide=currentSlide();
   const on=!!slide&&isAutoLevelOn(getColor(slide.file));
-  const b=document.getElementById('autoLevelsBtn');if(b)b.classList.toggle('on',on);
-  const r=document.getElementById('autoLevelsRstBtn');if(r)r.classList.toggle('show',on);
+  const b=document.getElementById('autoLevelsBtn');if(b)b.setAttribute('aria-pressed',on?'true':'false');
+  const r=document.getElementById('autoLevelsRstBtn');if(r)r.hidden=!on;
 }
 // 측정 버퍼 — 레벨 그래프와 같은 축소 워프(≤320px, 코너/비율 기준 캐시됨)에 코어를 그대로 돌린다.
 // overrides 로 "어느 단계까지 통과시킬지"만 정한다 → 수식을 여기 복제하지 않는다(코어가 단일 출처).
@@ -2266,15 +2393,17 @@ function autoLevels(){
   });
   setColorObj(slide.file,c);
   refreshColorUi();scheduleRender();
-  setColorMsg(`자동 레벨: R ${c.rLo}–${c.rHi} · G ${c.gLo}–${c.gHi} · B ${c.bLo}–${c.bHi}`
-    +(flat.length?` (${flat.join('/')} 채널은 평탄 — 건너뜀)`:' (채널별 스트레치 → 색캐스트 제거)'));
+  const changed=isAutoLevelOn(c);   // 세 채널이 이미 0~255 를 다 쓰고 있으면 바뀌는 것이 없다
+  setColorMsg(changed
+    ?'자동 레벨을 적용했습니다 — 색 치우침을 줄였습니다'+(flat.length?` (${flat.join('/')} 채널은 변화가 없어 건너뜀)`:'')
+    :'자동 레벨: 이 사진은 색 범위를 이미 충분히 쓰고 있어 바뀐 것이 없습니다');
 }
 function autoLevelsReset(){
   const slide=currentSlide();if(!slide)return;
   pushUndoCur('자동 레벨 해제');
   setColorObj(slide.file,{...getColor(slide.file),...AUTOLV_OFF});
   refreshColorUi();scheduleRender();
-  setColorMsg('자동 레벨 해제됨 (나머지 보정값은 유지)');
+  setColorMsg('자동 레벨을 해제했습니다 (나머지 보정값은 그대로)');
 }
 // gray-world 평균 — 코어 1~2단계(밝기·대비)만 통과시킨 전체 평균 RGB.
 // 스포이드(eyedropAt)와 같은 기준이라 두 기능의 결과가 서로 일관된다.
@@ -2301,8 +2430,8 @@ function autoWhiteBalance(){
   const c=getColor(slide.file);c.temp=temp;c.tint=tint;setColorObj(slide.file,c);
   refreshColorUi();scheduleRender();
   setColorMsg((wasClamped('temp',rawTemp)||wasClamped('tint',rawTint))
-    ?`자동 WB: 색편차 큼 — 부분 보정 (색온도 ${temp} / 색조 ${tint} · 요구값 ${Math.round(rawTemp)}/${Math.round(rawTint)})`
-    :`자동 화이트밸런스: 색온도 ${temp} / 색조 ${tint} (전체 평균 → 중성 회색)`);
+    ?`자동 화이트밸런스: 색 치우침이 커서 일부만 보정했습니다 (색온도 ${temp} / 색조 ${tint} · 필요한 값 ${Math.round(rawTemp)}/${Math.round(rawTint)})`
+    :`자동 화이트밸런스를 적용했습니다 (색온도 ${temp} / 색조 ${tint})`);
 }
 // 자동 색조 — 녹↔마젠타 축만(tint). 색온도는 건드리지 않는다.
 function autoTint(){
@@ -2316,41 +2445,69 @@ function autoTint(){
   const c=getColor(slide.file);c.tint=tint;setColorObj(slide.file,c);   // temp 불변
   refreshColorUi();scheduleRender();
   setColorMsg(wasClamped('tint',rawTint)
-    ?`자동 색조: 편차 큼 — 부분 보정 (색조 ${tint} · 요구값 ${Math.round(rawTint)})`
-    :`자동 색조: 색조 ${tint} (녹↔마젠타 축만 · 색온도 불변)`);
+    ?`자동 색조: 치우침이 커서 일부만 보정했습니다 (색조 ${tint} · 필요한 값 ${Math.round(rawTint)})`
+    :`자동 색조를 적용했습니다 (색조 ${tint} · 색온도는 그대로)`);
 }
 
-// ===================== 인라인 확인 대화 (prompt()/confirm() 금지) =====================
-let modalOnOk=null,modalKeyHandler=null;
+// ===================== 확인 대화 하나 (브라우저 기본 대화상자는 쓰지 않는다) =====================
+// openModal({title, html|node, ok, okKind:'primary'|'danger', cancel, onOk, keepOpen, canClose})
+//  · html: 본문 HTML(값은 호출하는 쪽이 esc() 로 감쌀 것) / node: 본문 DOM 노드
+//  · okKind: 확인 버튼 종류 — 되돌릴 수 없거나 덮어쓰는 동작은 'danger'
+//  · keepOpen: 확인을 눌러도 닫지 않는다(서버 요청이 끝나야 닫히는 대화 — 호출한 쪽이 close() 를 부른다)
+//  · canClose(): false 면 취소·Esc·바깥 클릭을 무시한다
+// 돌려주는 값 {close, setBusy(busy,label), setError(text), body, okBtn, cancelBtn}. workflow.js 도 이 함수를 쓴다.
+let modalCfg=null,modalKeyHandler=null,modalReturnFocus=null;
 function modalOpen(){const b=document.getElementById('modalBack');return !!b&&b.classList.contains('show');}
-function openModal(title,html,okLabel,onOk){
-  const back=document.getElementById('modalBack');if(!back)return;
-  document.getElementById('modalTitle').textContent=title;
-  document.getElementById('modalMsg').innerHTML=html;
-  const ok=document.getElementById('modalOkBtn');
-  ok.textContent=okLabel;
-  modalOnOk=onOk;
-  ok.onclick=()=>{const f=modalOnOk;closeModal();if(f)f();};
+function openModal(cfg){
+  const back=document.getElementById('modalBack');if(!back)return null;
+  if(modalOpen())closeModal();
+  modalCfg=cfg;
+  document.getElementById('modalTitle').textContent=cfg.title||'';
+  const body=document.getElementById('modalMsg');
+  body.textContent='';
+  if(cfg.node)body.appendChild(cfg.node);else body.innerHTML=cfg.html||'';
+  const err=document.getElementById('modalError');err.textContent='';
+  const ok=document.getElementById('modalOkBtn'),cancel=document.getElementById('modalCancelBtn');
+  ok.className='btn '+(cfg.okKind||'primary');ok.textContent=cfg.ok||'확인';ok.disabled=false;
+  cancel.textContent=cfg.cancel||'취소';cancel.disabled=false;
+  ok.onclick=()=>{const f=cfg.onOk;if(!cfg.keepOpen)closeModal();if(f)f();};
+  cancel.onclick=requestCloseModal;
+  modalReturnFocus=document.activeElement;
   back.classList.add('show');
-  modalKeyHandler=e=>{if(e.key==='Escape'){e.preventDefault();closeModal();}};
+  modalKeyHandler=e=>{if(e.key==='Escape'){e.preventDefault();requestCloseModal();}};
   document.addEventListener('keydown',modalKeyHandler);
   ok.focus();
+  return {
+    close:closeModal,
+    setBusy(busy,label){ok.disabled=!!busy;cancel.disabled=!!busy;if(label!=null)ok.textContent=label;},
+    setError(text){err.textContent=text||'';},
+    body,okBtn:ok,cancelBtn:cancel
+  };
+}
+function requestCloseModal(){
+  if(modalCfg&&typeof modalCfg.canClose==='function'&&!modalCfg.canClose())return;
+  closeModal();
 }
 function closeModal(){
   const back=document.getElementById('modalBack');if(back)back.classList.remove('show');
   if(modalKeyHandler)document.removeEventListener('keydown',modalKeyHandler);
-  modalKeyHandler=null;modalOnOk=null;
+  modalKeyHandler=null;modalCfg=null;
+  if(modalReturnFocus&&typeof modalReturnFocus.focus==='function'){try{modalReturnFocus.focus();}catch(_e){}}
+  modalReturnFocus=null;
 }
-// 실수로 누르면 그 화자 전체가 덮이므로 반드시 확인을 받는다.
+// 실수로 누르면 그 발표 전체가 덮이므로 반드시 확인을 받는다.
 function confirmApplySpeaker(){
   const slide=currentSlide();if(!slide)return;
   const n=(DATA[curFolder]||[]).length;
-  openModal('이 화자 전체에 적용',
-    `현재 색보정 값을 <b>${esc(curFolder)}</b> 의 <b>${n}장</b> 전체에 덮어씁니다.<br>`
-    +'각 슬라이드에 따로 맞춰둔 기존 색보정 값은 덮어쓰입니다.<br>'
-    +'<b>되돌리기(Ctrl+Z)는 슬라이드마다 한 장씩</b>이라, 전체를 한 번에 되돌릴 수는 없습니다.<br>'
-    +'<span class="muted">걱정되면 취소하고 먼저 백업을 내보내세요.</span>',
-    '전체에 적용', ()=>applyColorTo('speaker'));
+  openModal({
+    title:'이 발표 전체에 적용',
+    html:`현재 색보정 값을 <b>${esc(curFolder)}</b> 발표의 <b>${n}장</b> 전체에 덮어씁니다.<br>`
+      +'각 사진에 따로 맞춰둔 기존 색보정 값은 덮어쓰입니다.<br>'
+      +'<b>되돌리기(Ctrl+Z)는 사진마다 한 장씩</b>이라, 전체를 한 번에 되돌릴 수는 없습니다.<br>'
+      +'<span class="muted">걱정되면 취소하고 먼저 백업을 내보내세요.</span>',
+    ok:'전체에 적용',okKind:'danger',
+    onOk:()=>applyColorTo('speaker')
+  });
 }
 async function loadClassification(){
   try{
@@ -2360,9 +2517,10 @@ async function loadClassification(){
     clusterParams=j.cluster_params||null;
     const map={};(j.slides||[]).forEach(s=>{map[`../${s.speaker}/img/${s.file}`.normalize('NFC')]=s.cluster;});
     clusterByFile=map;updateColorClusterLabel();
+    ['clusterPresetBtn','clusterAllBtn'].forEach(id=>{const b=document.getElementById(id);if(b)b.hidden=false;});   // 군집 자료가 있을 때만 보인다
   }catch(e){
     clusterParams=null;clusterByFile={};
-    const b=document.getElementById('clusterPresetBtn');if(b){b.disabled=true;b.title='classification.json 로드 실패: '+e.message;}
+    updateColorClusterLabel();
     console.warn('classification.json 로드 실패(군집 기능 비활성, 수동 색보정은 정상):',e.message);
   }
 }
@@ -2374,7 +2532,7 @@ document.addEventListener('keydown',e=>{
   if(modalOpen())return;
   if(e.metaKey||e.ctrlKey||e.altKey)return;   // ⌘R(새로고침) 등 브라우저 단축키를 가로채지 않는다
   if(colorMode && e.key.toLowerCase()==='b'){e.preventDefault();toggleBeforeAfter();}
-  if(colorMode && e.key.toLowerCase()==='r'){e.preventDefault();resetColor();}   // 원본 리셋 (Ctrl+Z 로 되돌림)
+  if(colorMode && e.key.toLowerCase()==='r'){e.preventDefault();resetColor();}   // 원래대로 (Ctrl+Z 로 되돌림)
   if(eyedropOn && e.key==='Escape'){e.preventDefault();setEyedropper(false);setColorMsg('스포이드 취소됨');}
 });
 // 슬라이더 드래그 = 1스텝: oninput 마다가 아니라 mousedown(드래그 시작) 시점에 변경 전 값을 1회만 저장.
@@ -2383,7 +2541,7 @@ document.getElementById('sliderGrid').addEventListener('mousedown',e=>{
   const inp=e.target.closest&&e.target.closest('input[type=range][data-k]');
   if(!inp)return;
   const d=COLOR_DEFS.find(x=>x.k===inp.dataset.k);
-  pushUndoCur(d?d.label:inp.dataset.k);
+  pushUndoCur(d?colorLabel(d):inp.dataset.k);
 });
 // 스포이드 클릭 대상 = 보정 미리보기(색보정 모드의 유일한 큰 화면)
 document.getElementById('preview').addEventListener('click',e=>{

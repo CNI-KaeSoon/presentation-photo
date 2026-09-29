@@ -56,6 +56,19 @@
     if (node) node.textContent = value == null ? '' : String(value);
   }
 
+  // index.html 의 <symbol> 스프라이트를 쓰는 선 아이콘.
+  function icon(name) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'ic');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    var use = document.createElementNS(ns, 'use');
+    use.setAttribute('href', '#i-' + name);
+    svg.appendChild(use);
+    return svg;
+  }
+
   function exportModeOption(mode, title, description) {
     var radio = el('input', {
       type: 'radio',
@@ -108,11 +121,10 @@
       var item = el('li', {className: 'wfOrderItem', 'data-group': name});
       var handle = el('span', {
         className: 'wfOrderHandle',
-        text: '≡',
         draggable: 'true',
-        title: '드래그해 순서 변경',
-        'aria-label': name + ' 순서 변경 핸들'
-      });
+        title: '끌어서 순서 변경',
+        'aria-label': name + ' 순서 변경 손잡이'
+      }, [icon('grip')]);
       handle.addEventListener('dragstart', function (event) {
         if (state.disabled || isBusy() || state.uploading) {
           event.preventDefault();
@@ -179,83 +191,64 @@
     if (document.getElementById('wfStyle')) return;
     var style = el('style', {id: 'wfStyle'});
     style.textContent = [
-      '#wfPanel{margin-top:0;border-color:#bfd0e8}',
-      '#wfPanel[hidden]{display:none}',
-      '.wfHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}',
-      '.wfTitle{display:flex;align-items:center;gap:9px;flex-wrap:wrap}',
-      '.wfTitle h2{font-size:17px;margin:0}',
-      '.wfSteps{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:9px}',
-      '.wfStep{border:1px solid var(--line);border-radius:18px;padding:3px 9px;font-size:11px;color:var(--mut);background:var(--panel2)}',
-      '.wfStep.active{border-color:var(--acc);color:var(--acc2);background:#eff6ff;font-weight:800}',
-      '.wfStep.done{border-color:#bbf7d0;color:var(--ok);background:#ecfdf3}',
-      '.wfSummary{font-size:12px;color:var(--mut);margin-top:5px}',
-      '.wfBody{margin-top:12px;border-top:1px solid var(--line)}',
+      '#wfPanel{margin-top:0}',
+      '.wfHead{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s2);flex-wrap:wrap}',
+      '.wfTitle{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}',
+      '.wfTitle h2{font-size:var(--f3);font-weight:800}',
+      '.wfSummary{font-size:var(--f1);color:var(--muted);margin-top:var(--s1)}',
+      '.wfBody{margin-top:var(--s2);border-top:1px solid var(--border)}',
       '#wfPanel.wfCollapsed .wfBody{display:none}',
-      '.wfAccordion{border-bottom:1px solid var(--line)}',
-      '.wfAccordionHead{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0}',
+      '.wfAccordion{border-bottom:1px solid var(--border)}',
+      '.wfAccordionHead{display:flex;align-items:center;justify-content:space-between;gap:var(--s2);padding:var(--s2) 0}',
       '.wfAccordionToggle{min-width:62px}',
-      '.wfAccordionContent[hidden]{display:none}',
-      '.wfRow{display:grid;grid-template-columns:minmax(120px,.28fr) minmax(280px,1fr);gap:14px;padding:3px 0 13px}',
-      '.wfRow h3{font-size:13px;margin:1px 0 3px}',
-      '.wfRowInfo{font-size:12px;color:var(--mut)}',
-      '.wfDrop{border:2px dashed #9bb4d5;border-radius:8px;background:#f8fafc;padding:18px;text-align:center;cursor:pointer;transition:.15s}',
-      '.wfDrop:hover,.wfDrop.dragover{border-color:var(--acc);background:#eff6ff}',
-      '.wfDrop strong{display:block;color:var(--acc2);font-size:13px}',
-      '.wfDrop span{display:block;color:var(--mut);font-size:11px;margin-top:3px}',
-      '.wfControls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}',
-      '.wfControls label{font-size:12px;color:var(--mut);display:flex;align-items:center;gap:5px}',
-      '.wfControls input[type=number]{width:72px;border:1px solid var(--line);border-radius:5px;padding:5px 7px}',
-      '.wfCounts{font-size:12px;margin-top:7px;color:var(--ink)}',
-      '.wfEnv{font-size:11px;color:var(--mut);margin-top:5px}',
-      '.wfExportModes{display:grid;gap:7px;margin-top:4px}',
-      '.wfExportModes[hidden],.wfOrderBox[hidden]{display:none}',
-      '.wfExportOption{display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:#f8fafc;font-size:12px;color:var(--ink);cursor:pointer}',
-      '.wfExportOption:has(input:checked){border-color:var(--acc);background:#eff6ff}',
+      '.wfRow{display:grid;grid-template-columns:minmax(120px,.28fr) minmax(280px,1fr);gap:var(--s2);padding:0 0 var(--s3)}',
+      '.wfRow h3{font-size:var(--f2);font-weight:700;margin:0 0 var(--s1)}',
+      '.wfRowInfo{font-size:var(--f1);color:var(--muted)}',
+      '.wfDrop{display:flex;flex-direction:column;align-items:center;gap:var(--s1);border:2px dashed var(--border-strong);border-radius:var(--r3);background:var(--surface);padding:var(--s3);text-align:center;cursor:pointer;transition:.15s}',
+      '.wfDrop:hover,.wfDrop.dragover{border-color:var(--primary);background:var(--primary-soft)}',
+      '.wfDrop[aria-disabled=true]{opacity:.5;cursor:not-allowed}',
+      '.wfDropIcon{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary-text)}',
+      '.wfDropIcon .ic{width:24px;height:24px}',
+      '.wfDrop strong{display:block;font-size:var(--f3);font-weight:800}',
+      '.wfDropSub{display:block;color:var(--muted);font-size:var(--f1)}',
+      '.wfControls{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap;margin-top:var(--s1)}',
+      '.wfControls label{font-size:var(--f1);color:var(--text-2);display:flex;align-items:center;gap:var(--s1)}',
+      '.wfControls input[type=number]{width:72px;border:1px solid var(--border-strong);border-radius:var(--r1);padding:var(--s1);background:var(--surface)}',
+      '.wfCounts{font-size:var(--f1);margin-top:var(--s1);color:var(--text)}',
+      '.wfEnv{font-size:var(--f1);color:var(--muted);margin-top:var(--s1)}',
+      '.wfExportModes{display:grid;gap:var(--s1);margin-top:4px}',
+      '.wfExportOption{display:flex;align-items:flex-start;gap:var(--s1);padding:var(--s1) var(--s2);border:1px solid var(--border);border-radius:var(--r2);background:var(--surface-2);font-size:var(--f1);color:var(--text);cursor:pointer}',
+      '.wfExportOption:has(input:checked){border-color:var(--primary);background:var(--primary-soft)}',
       '.wfExportOption input{margin-top:3px}',
-      '.wfExportOption strong{display:block}',
-      '.wfExportOption span{display:block;color:var(--mut);font-size:11px}',
-      '.wfOrderBox{margin:8px 0 0;padding:9px 10px;border:1px solid var(--line);border-radius:7px}',
-      '.wfOrderTitle{font-size:12px;font-weight:800;margin-bottom:6px}',
-      '.wfOrderList{list-style:none;margin:0;padding:0;display:grid;gap:5px}',
-      '.wfOrderItem{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:#fff;font-size:12px}',
+      '.wfExportOption strong{display:block;font-size:var(--f2);color:var(--text)}',
+      '.wfExportOption span{display:block;color:var(--muted);font-size:var(--f1)}',
+      '.wfOrderBox{margin:var(--s1) 0 0;padding:var(--s2);border:1px solid var(--border);border-radius:var(--r2)}',
+      '.wfOrderTitle{font-size:var(--f1);font-weight:800;margin-bottom:var(--s1)}',
+      '.wfOrderList{list-style:none;margin:0;padding:0;display:grid;gap:var(--s1)}',
+      '.wfOrderItem{display:flex;align-items:center;gap:var(--s1);padding:var(--s1) var(--s2);border:1px solid var(--border);border-radius:var(--r1);background:var(--surface);font-size:var(--f2)}',
       '.wfOrderItem.dragging{opacity:.45}',
-      '.wfOrderHandle{font-size:17px;line-height:1;color:var(--mut);cursor:grab;user-select:none}',
+      '.wfOrderHandle{display:inline-grid;place-items:center;color:var(--muted);cursor:grab;user-select:none}',
       '.wfOrderHandle:active{cursor:grabbing}',
-      '.wfBanner{display:none;margin-top:11px;padding:9px 11px;border-radius:6px;font-size:12px;white-space:pre-wrap}',
-      '.wfBanner.show{display:block}',
-      '.wfBanner.info{background:#eff6ff;color:var(--acc2);border:1px solid #bfdbfe}',
-      '.wfBanner.ok{background:#ecfdf3;color:var(--ok);border:1px solid #bbf7d0}',
-      '.wfBanner.warn{background:#fffbeb;color:var(--warn);border:1px solid #fde68a}',
-      '.wfBanner.error{background:#fef2f2;color:var(--bad);border:1px solid #fecaca}',
-      '.wfNoteActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px}',
-      '.wfNoteActions[hidden]{display:none}',
-      '.wfHeadActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
-      '.wfWhy{font-size:11px;color:var(--warn)}',
+      '.wfNoteText{white-space:pre-wrap}',
+      '.wfNoteActions{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap;margin-top:var(--s1)}',
+      '.wfHeadActions{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap}',
+      '.wfWhy{font-size:var(--f1);color:var(--warn)}',
       '.wfWhy:empty{display:none}',
-      '#wfLocalBand{margin:0 0 10px}',
-      '.wfNeList{margin:7px 0;padding-left:18px;font-size:13px}',
-      '.wfNeList li{margin:2px 0}',
-      '.wfNeOption{display:flex;align-items:flex-start;gap:7px;margin-top:10px;font-size:13px}',
+      '#wfLocalBand{margin:0 0 var(--s2)}',
+      '.wfNeOption{display:flex;align-items:flex-start;gap:var(--s1);margin-top:var(--s2)}',
       '.wfNeOption input{margin-top:3px}',
-      '.wfNeError{color:var(--bad);font-size:12px;margin-top:8px;white-space:pre-wrap}',
-      '.wfNeError:empty{display:none}',
-      '.wfProgress{display:none;margin-top:11px;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2)}',
+      '.wfProgress{display:none;margin-top:var(--s2);padding:var(--s2);border:1px solid var(--border);border-radius:var(--r2);background:var(--surface-2)}',
       '.wfProgress.show{display:block}',
-      '.wfProgressHead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}',
-      '.wfBar{height:7px;background:#dbe4f0;border-radius:8px;overflow:hidden;margin:8px 0}',
-      '.wfBarFill{height:100%;width:0;background:var(--acc);transition:width .2s}',
-      '.wfLogTail,.wfLogAll{margin:7px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#334155}',
-      '.wfLogAll{max-height:260px;overflow:auto}',
-      '.wfDetails summary{cursor:pointer;color:var(--acc2);font-size:11px;margin-top:6px}',
-      '.wfUploadResults{margin-top:7px;white-space:pre-wrap;font-size:11px;color:var(--mut)}',
-      '.wfModalBack{display:none;position:fixed;inset:0;z-index:120;background:rgba(15,23,42,.48);align-items:center;justify-content:center;padding:20px}',
-      '.wfModalBack.show{display:flex}',
-      '.wfModal{max-width:520px;width:100%;background:var(--panel);border-radius:10px;border:1px solid var(--line);box-shadow:0 18px 50px rgba(15,23,42,.28);padding:18px}',
-      '.wfModal h2{font-size:17px;margin:0 0 9px}',
-      '.wfModal p{font-size:13px;margin:7px 0}',
-      '.wfModalActions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}',
+      '.wfProgressHead{display:flex;align-items:center;justify-content:space-between;gap:var(--s1);flex-wrap:wrap}',
+      '.wfProgressNote{font-size:var(--f1);color:var(--muted)}',
+      '.wfProgressNote:empty{display:none}',
+      '.wfBar{height:6px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden;margin:var(--s1) 0}',
+      '.wfBarFill{height:100%;width:0;background:var(--primary);border-radius:var(--r-pill);transition:width .2s}',
+      '.wfLogAll{margin:var(--s1) 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font);font-size:var(--f1);color:var(--text-2);max-height:260px;overflow:auto}',
+      '.wfDetails summary{cursor:pointer;color:var(--primary-text);font-size:var(--f1);margin-top:var(--s1)}',
+      '.wfUploadResults{margin-top:var(--s1);white-space:pre-wrap;font-size:var(--f1);color:var(--muted)}',
       'body.wfCorrectionCollapsed #editor,body.wfCorrectionCollapsed #empty{display:none!important}',
-      '@media(max-width:760px){.wfRow{grid-template-columns:1fr}.wfDrop{padding:13px}}'
+      '@media(max-width:760px){.wfRow{grid-template-columns:1fr}.wfDrop{padding:var(--s2)}}'
     ].join('\n');
     document.head.appendChild(style);
   }
@@ -264,19 +257,19 @@
     var main = document.getElementById('main');
     if (!main) return false;
 
-    ui.panel = el('section', {id: 'wfPanel', className: 'panel'});
+    ui.panel = el('section', {id: 'wfPanel', className: 'panel', 'aria-label': '작업 순서'});
     ui.panel.hidden = true;
     var head = el('div', {className: 'wfHead'});
     var headLeft = el('div');
     var title = el('div', {className: 'wfTitle'}, [
-      el('h2', {text: '📋 작업 순서'})
+      el('h2', {text: '작업 순서'})
     ]);
     ui.summary = el('div', {className: 'wfSummary', text: '서버 연결을 확인하는 중입니다.'});
     ui.steps = [
-      el('span', {className: 'wfStep', text: '① 사진 넣기'}),
-      el('span', {className: 'wfStep', text: '② 사진 준비'}),
-      el('span', {className: 'wfStep', text: '③ 모서리·색 보정'}),
-      el('span', {className: 'wfStep', text: '④ PDF'})
+      el('span', {className: 'badge step todo', text: '① 사진 넣기'}),
+      el('span', {className: 'badge step todo', text: '② 사진 준비'}),
+      el('span', {className: 'badge step todo', text: '③ 경계·색보정'}),
+      el('span', {className: 'badge step todo', text: '④ PDF'})
     ];
     headLeft.appendChild(title);
     headLeft.appendChild(ui.summary);
@@ -286,7 +279,7 @@
     });
     ui.newEventBtn = el('button', {
       type: 'button',
-      className: 'btn sm warn',
+      className: 'btn sm danger',
       text: '새 행사 시작…',
       title: '지금 작업을 보관 폴더로 옮기고 빈 작업장에서 새로 시작합니다 (삭제하지 않습니다)'
     });
@@ -297,12 +290,12 @@
     ui.panel.appendChild(head);
 
     // 알림 띠 두 개: 배너(작업 결과·오류, 필요하면 버튼 하나)와 알림(상태에서 계산되는 안내 — 원본 변경 등).
-    var banner = buildNote('wfBanner');
+    var banner = buildNote('banner');
     ui.banner = banner.root;
     ui.bannerText = banner.text;
     ui.bannerActions = banner.actions;
     ui.panel.appendChild(ui.banner);
-    var notice = buildNote('wfBanner');
+    var notice = buildNote('banner');
     ui.notice = notice.root;
     ui.noticeText = notice.text;
     ui.noticeActions = notice.actions;
@@ -317,8 +310,9 @@
     ]);
     var fileWork = el('div');
     ui.drop = el('div', {className: 'wfDrop', role: 'button', tabindex: '0'}, [
-      el('strong', {text: '여기에 사진을 끌어다 놓으세요'}),
-      el('span', {text: 'JPG · PNG · HEIC 등 파일 단위로 업로드합니다.'})
+      el('span', {className: 'wfDropIcon'}, [icon('upload')]),
+      el('strong', {text: '사진을 여기로 끌어 놓으세요'}),
+      el('span', {className: 'wfDropSub', text: 'JPG · PNG · HEIC 등 파일 단위로 올립니다. 사진은 이 컴퓨터 밖으로 나가지 않습니다.'})
     ]);
     ui.fileInput = el('input', {
       type: 'file',
@@ -337,7 +331,7 @@
       uploadFiles(ui.fileInput.files);
       ui.fileInput.value = '';
     });
-    ui.openSrcBtn = el('button', {type: 'button', className: 'btn', text: '사진 폴더 열기'});
+    ui.openSrcBtn = el('button', {type: 'button', className: 'btn'}, [icon('folder'), '사진 폴더 열기']);
     ui.openSrcBtn.addEventListener('click', function () { openFolder('src'); });
     ui.srcCount = el('span', {className: 'wfCounts', text: '현재 원본 0장'});
     fileWork.appendChild(ui.drop);
@@ -353,12 +347,12 @@
 
     var prepareInfo = el('div', {}, [
       el('h3', {text: '② 사진 준비'}),
-      el('div', {className: 'wfRowInfo', text: '첫 사진의 촬영 시각을 기준으로, 촬영 간격이 이 값보다 벌어지는 지점을 발표의 경계로 보고 그룹을 나눕니다. 이어서 작업용 축소본과 목록을 만듭니다.'})
+      el('div', {className: 'wfRowInfo', text: '촬영 간격이 “발표 간격”보다 크게 벌어진 곳에서 발표를 나누고, 이어서 작업용 사진과 목록을 만듭니다.'})
     ]);
     var prepareWork = el('div');
     ui.gap = el('input', {type: 'number', min: '1', max: '600', value: '20', inputmode: 'numeric'});
-    ui.prepareBtn = el('button', {type: 'button', className: 'btn on', text: '사진 준비 실행'});
-    ui.regroupBtn = el('button', {type: 'button', className: 'btn warn', text: '다시 나누기…'});
+    ui.prepareBtn = el('button', {type: 'button', className: 'btn primary', text: '사진 준비 실행'});
+    ui.regroupBtn = el('button', {type: 'button', className: 'btn danger', text: '다시 나누기…'});
     ui.prepareBtn.addEventListener('click', function () { runPrepare(false); });
     ui.regroupBtn.addEventListener('click', confirmRegroup);
     ui.prepareWhy = el('span', {className: 'wfWhy'});
@@ -368,7 +362,7 @@
       ui.regroupBtn,
       ui.prepareWhy
     ]));
-    ui.groupInfo = el('div', {className: 'wfCounts', text: '그룹 계획 없음'});
+    ui.groupInfo = el('div', {className: 'wfCounts', text: '나눈 발표 없음'});
     ui.envInfo = el('div', {className: 'wfEnv', text: '환경 상태 확인 중'});
     prepareWork.appendChild(ui.groupInfo);
     prepareWork.appendChild(ui.envInfo);
@@ -376,7 +370,7 @@
 
     var exportInfo = el('div', {}, [
       el('h3', {text: '④ PDF 만들기'}),
-      el('div', {className: 'wfRowInfo', text: '현재 모서리·색 보정값을 원본 사진에 적용해 고해상도 PDF를 만듭니다.'})
+      el('div', {className: 'wfRowInfo', text: '현재 경계·색보정 값을 원본 사진에 적용해 고해상도 PDF를 만듭니다.'})
     ]);
     var exportWork = el('div');
     ui.onlyDone = el('input', {type: 'checkbox'});
@@ -384,27 +378,27 @@
     ui.exportModes = el('div', {className: 'wfExportModes'});
     ui.exportModes.appendChild(exportModeOption(
       'per-folder',
-      'A. 폴더별로 내보내기',
-      '그룹마다 PDF를 1개씩 만듭니다.'
+      'A. 발표별로 PDF 만들기',
+      '발표마다 PDF를 1개씩 만듭니다.'
     ));
     ui.multiExportModes = el('div', {className: 'wfExportModes'});
     ui.multiExportModes.appendChild(exportModeOption(
       'merged',
-      'B. 한꺼번에 합쳐서 내보내기',
-      '그룹별 PDF와 모든 그룹을 합친 통합본을 함께 만듭니다.'
+      'B. 발표별 PDF + 전체 합본',
+      '발표별 PDF와 모든 발표를 합친 PDF를 함께 만듭니다.'
     ));
     ui.multiExportModes.appendChild(exportModeOption(
       'ordered',
-      'C. 순서 변경 후 1개로 합치기',
-      '아래 그룹 순서대로 통합 PDF 1개만 만듭니다.'
+      'C. 순서를 바꿔 PDF 1개로 합치기',
+      '아래 발표 순서대로 합친 PDF 1개만 만듭니다.'
     ));
     ui.exportModes.appendChild(ui.multiExportModes);
     ui.orderBox = el('div', {className: 'wfOrderBox'});
-    ui.orderBox.appendChild(el('div', {className: 'wfOrderTitle', text: '≡ 핸들을 끌어 PDF 페이지 묶음 순서를 바꾸세요.'}));
+    ui.orderBox.appendChild(el('div', {className: 'wfOrderTitle', text: '손잡이를 끌어 발표 순서를 바꾸세요.'}));
     ui.orderList = el('ol', {className: 'wfOrderList'});
     ui.orderBox.appendChild(ui.orderList);
-    ui.exportBtn = el('button', {type: 'button', className: 'btn on', text: '선택한 방식으로 PDF 만들기'});
-    ui.openOutBtn = el('button', {type: 'button', className: 'btn', text: '결과 폴더 열기'});
+    ui.exportBtn = el('button', {type: 'button', className: 'btn primary', text: '선택한 방식으로 PDF 만들기'});
+    ui.openOutBtn = el('button', {type: 'button', className: 'btn'}, [icon('folder'), '결과 폴더 열기']);
     ui.exportBtn.addEventListener('click', runExportPdf);
     ui.openOutBtn.addEventListener('click', function () { openFolder('out'); });
     exportWork.appendChild(ui.exportModes);
@@ -416,11 +410,11 @@
       ui.openOutBtn,
       ui.exportWhy
     ]));
-    ui.resultInfo = el('div', {className: 'wfCounts', text: '현재 결과 PDF 0권'});
+    ui.resultInfo = el('div', {className: 'wfCounts', text: '현재 PDF 0개'});
     exportWork.appendChild(ui.resultInfo);
     exportWork.appendChild(el('div', {
       className: 'wfEnv',
-      text: '기존 “백업 내보내기” 다운로드도 오프라인 백업용으로 계속 사용할 수 있습니다.'
+      text: '“백업 내보내기”로 보정값을 파일로 따로 보관할 수도 있습니다.'
     }));
     var exportRow = el('div', {className: 'wfRow'}, [exportInfo, exportWork]);
 
@@ -443,7 +437,7 @@
       var section = el('section', {className: 'wfAccordion', 'data-step': String(index + 1)});
       var toggle = el('button', {
         type: 'button',
-        className: 'btn sm wfAccordionToggle',
+        className: 'btn sm ghost wfAccordionToggle',
         text: '펼치기',
         'aria-expanded': 'false'
       });
@@ -461,34 +455,34 @@
 
     ui.progress = el('div', {className: 'wfProgress'});
     ui.progressLabel = el('strong', {text: '대기'});
-    ui.cancelBtn = el('button', {type: 'button', className: 'btn sm warn', text: '작업 취소'});
+    ui.cancelBtn = el('button', {type: 'button', className: 'btn sm danger', text: '작업 취소'});
     ui.cancelBtn.addEventListener('click', cancelJob);
     ui.progress.appendChild(el('div', {className: 'wfProgressHead'}, [ui.progressLabel, ui.cancelBtn]));
     ui.barFill = el('div', {className: 'wfBarFill'});
     ui.progress.appendChild(el('div', {className: 'wfBar'}, [ui.barFill]));
-    ui.logTail = el('pre', {className: 'wfLogTail'});
-    ui.progress.appendChild(ui.logTail);
+    // 명령·절대경로가 섞인 기록은 기본 접힘 — 진행 상황은 위 막대와 이름으로 충분하다. 실패하면 펼친다.
+    ui.progressNote = el('div', {className: 'wfProgressNote'});
+    ui.progress.appendChild(ui.progressNote);
     ui.logAll = el('pre', {className: 'wfLogAll'});
-    var details = el('details', {className: 'wfDetails'}, [
-      el('summary', {text: '전체 로그 펼치기'}),
+    ui.details = el('details', {className: 'wfDetails'}, [
+      el('summary', {text: '자세한 기록'}),
       ui.logAll
     ]);
-    ui.progress.appendChild(details);
+    ui.progress.appendChild(ui.details);
     ui.body.appendChild(ui.progress);
 
     main.prepend(ui.panel);
     buildLocalBand(main);
-    buildModal();
-    buildNewEventModal();
     return true;
   }
 
   // 글 한 덩어리 + 버튼 줄로 된 알림 띠 뼈대.
   function buildNote(className) {
-    var text = el('div');
+    var text = el('div', {className: 'wfNoteText'});
     var actions = el('div', {className: 'wfNoteActions'});
     actions.hidden = true;
     var root = el('div', {className: className, role: 'status'}, [text, actions]);
+    root.hidden = true;
     return {root: root, text: text, actions: actions};
   }
 
@@ -497,7 +491,7 @@
     (actions || []).forEach(function (action) {
       var button = el('button', {
         type: 'button',
-        className: 'btn sm' + (action.className ? ' ' + action.className : ''),
+        className: 'btn sm' + (action.className ? ' ' + action.className : ''),   // 'primary' | 'danger'
         text: action.label
       });
       if (action.disabled) button.disabled = true;
@@ -507,41 +501,23 @@
     box.hidden = !(actions && actions.length);
   }
 
-  function buildModal() {
-    ui.modalBack = el('div', {className: 'wfModalBack', role: 'dialog', 'aria-modal': 'true'});
-    var modal = el('div', {className: 'wfModal'});
-    modal.appendChild(el('h2', {text: '그룹 다시 나누기'}));
-    modal.appendChild(el('p', {text: '다시 나누면 그룹 이름이 바뀔 수 있습니다.'}));
-    modal.appendChild(el('p', {}, [
-      el('strong', {text: '이미 보정한 작업의 저장 키가 어긋날 수 있습니다.'}),
-      document.createTextNode(' 필요한 백업을 먼저 내려받았는지 확인하세요.')
-    ]));
-    var cancel = el('button', {type: 'button', className: 'btn', text: '취소'});
-    ui.modalOk = el('button', {type: 'button', className: 'btn warn on', text: '다시 나누기'});
-    cancel.addEventListener('click', closeModal);
-    ui.modalOk.addEventListener('click', function () {
-      closeModal();
-      runPrepare(true);
-    });
-    modal.appendChild(el('div', {className: 'wfModalActions'}, [cancel, ui.modalOk]));
-    ui.modalBack.appendChild(modal);
-    ui.modalBack.addEventListener('click', function (event) {
-      if (event.target === ui.modalBack) closeModal();
-    });
-    document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape' && ui.modalBack.classList.contains('show')) closeModal();
-    });
-    document.body.appendChild(ui.modalBack);
-  }
-
+  // 확인 대화는 index.html 의 openModal 하나만 쓴다(같은 마크업·같은 버튼 순서 [취소][확인/위험]).
   function confirmRegroup() {
     if (state.disabled || isBusy()) return;
-    ui.modalBack.classList.add('show');
-    ui.modalOk.focus();
-  }
-
-  function closeModal() {
-    ui.modalBack.classList.remove('show');
+    if (typeof openModal !== 'function') return;
+    openModal({
+      title: '발표 다시 나누기',
+      node: el('div', {}, [
+        el('p', {text: '다시 나누면 발표 이름이 바뀔 수 있습니다.'}),
+        el('p', {}, [
+          el('strong', {text: '이미 보정한 경계·색보정이 새 발표와 어긋날 수 있습니다.'}),
+          document.createTextNode(' 필요한 백업(“백업 내보내기”)을 먼저 받았는지 확인하세요.')
+        ])
+      ]),
+      ok: '다시 나누기',
+      okKind: 'danger',
+      onOk: function () { runPrepare(true); }
+    });
   }
 
   function api(path, opts) {
@@ -585,10 +561,10 @@
 
   function renameAvailability() {
     if (state.disabled) {
-      return {enabled: false, reason: '시작 파일로 연 워크플로 서버에서만 이름을 바꿀 수 있습니다.'};
+      return {enabled: false, reason: '시작 파일로 연 도구 서버에서만 이름을 바꿀 수 있습니다.'};
     }
     if (!TOKEN || !state.status) {
-      return {enabled: false, reason: '워크플로 서버 연결을 확인하는 중입니다.'};
+      return {enabled: false, reason: '도구 서버 연결을 확인하는 중입니다.'};
     }
     if (isBusy() || state.uploading) {
       return {enabled: false, reason: '실행 중인 작업이 끝난 뒤 이름을 바꾸세요.'};
@@ -605,14 +581,14 @@
     });
   }
 
-  // 보정 화면의 '자동 찾기' — 서버가 사진 안의 슬라이드 경계를 OpenCV 로 찾아 준다(동기 응답).
+  // 보정 화면의 '경계 자동 찾기' — 서버가 사진 안의 슬라이드 경계를 OpenCV 로 찾아 준다(동기 응답).
   // 서버 없이 파일로 연 경우(state.disabled)에는 쓸 수 없고, 준비·PDF 잡이 도는 동안에도 잠근다.
   function autoDetectAvailability() {
     if (state.disabled) {
-      return {enabled: false, reason: '시작 파일로 연 워크플로 서버에서만 자동으로 찾을 수 있습니다.'};
+      return {enabled: false, reason: '시작 파일로 연 도구 서버에서만 자동으로 찾을 수 있습니다.'};
     }
     if (!TOKEN || !state.status) {
-      return {enabled: false, reason: '워크플로 서버 연결을 확인하는 중입니다.'};
+      return {enabled: false, reason: '도구 서버 연결을 확인하는 중입니다.'};
     }
     if (isBusy() || state.uploading) {
       return {enabled: false, reason: '실행 중인 작업이 끝난 뒤 쓰세요.'};
@@ -639,7 +615,7 @@
   function fetchToken() {
     return api('/api/token').then(function (payload) {
       if (!payload || payload.ok !== true || typeof payload.token !== 'string') {
-        throw new Error('워크플로 토큰 응답이 올바르지 않습니다.');
+        throw new Error('도구 서버 응답이 올바르지 않습니다.');
       }
       TOKEN = payload.token;
       return payload;
@@ -707,13 +683,17 @@
   function renderPanel(status) {
     var running = isBusy() || state.uploading || !!(status.job && status.job.state === 'running');
     var classes = stepClasses(status);
+    // 단계 배지: 끝남 = 완료(초록) · 지금 할 차례 = 자동(파랑) · 아직 = 미작업(점선)
     ui.steps.forEach(function (node, index) {
-      node.className = 'wfStep' + (classes[index] ? ' ' + classes[index] : '');
+      var kind = classes[index] === 'done' ? 'done' : (classes[index] === 'active' ? 'auto' : 'todo');
+      node.className = 'badge step ' + kind;
+      if (kind === 'auto') node.setAttribute('aria-current', 'step');
+      else node.removeAttribute('aria-current');
     });
     setText(ui.summary,
-      '원본 ' + Number(status.srcCount || 0) + '장 · 그룹 ' +
-      (Array.isArray(status.groups) ? status.groups.length : 0) + '개 · 결과 ' +
-      Number(status.resultCount || 0) + '권');
+      '원본 ' + Number(status.srcCount || 0) + '장 · 발표 ' +
+      (Array.isArray(status.groups) ? status.groups.length : 0) + '개 · PDF ' +
+      Number(status.resultCount || 0) + '개');
     setText(ui.srcCount, '현재 원본 ' + Number(status.srcCount || 0) + '장');
 
     var groups = Array.isArray(status.groups) ? status.groups : [];
@@ -724,15 +704,15 @@
         return String(group.name) + ' ' + Number(group.count || 0) + '장';
       }).join(' · '));
     } else {
-      setText(ui.groupInfo, status.worktree ? '그룹 계획은 있으나 준비된 사진이 없습니다.' : '그룹 계획 없음');
+      setText(ui.groupInfo, status.worktree ? '발표 계획은 있으나 준비된 사진이 없습니다.' : '나눈 발표 없음');
     }
 
     var env = status.env || {};
     setText(ui.envInfo,
       '환경 ' + (env.ok ? '준비됨' : '준비 필요') +
-      ' · 작업 워커 ' + Number(env.workers || 0) + '개' +
+      ' · 동시 처리 ' + Number(env.workers || 0) + '개' +
       ' · HEIC ' + (env.heic ? '지원' : '미지원'));
-    setText(ui.resultInfo, '현재 결과 PDF ' + Number(status.resultCount || 0) + '권');
+    setText(ui.resultInfo, '현재 PDF ' + Number(status.resultCount || 0) + '개');
     setText(ui.prepareBtn, status.worktree ? '그대로 준비' : '사진 준비 실행');
     ui.regroupBtn.hidden = !status.worktree;
     ui.newEventBtn.hidden = !hasArchivableWork(status);
@@ -784,28 +764,29 @@
     var actions = [];
     if (hasWork && Number(status.srcCount || 0) === 0) {
       text = '원본이 비어 있습니다 — 새 행사를 시작하려면 [새 행사 시작…]을 누르세요. ' +
-        '(이전 작업 그룹은 그대로 남아 있어 보정 화면에서 계속 편집할 수 있습니다.)';
-      actions = [{label: '새 행사 시작…', className: 'warn', disabled: running, onClick: confirmNewEvent}];
+        '(이전 작업의 발표는 그대로 남아 있어 보정 화면에서 계속 편집할 수 있습니다.)';
+      actions = [{label: '새 행사 시작…', className: 'danger', disabled: running, onClick: confirmNewEvent}];
     } else if (diff) {
       var parts = [];
       if (diff.added) parts.push('새 사진 ' + diff.added + '장');
       if (diff.missing) parts.push('없어진 사진 ' + diff.missing + '장');
       text = '원본이 바뀌었습니다(' + parts.join(', ') + '). ' +
-        '지금 작업을 보관하고 새로 시작하거나, 원본 전체로 그룹을 다시 나누세요.';
+        '지금 작업을 보관하고 새로 시작하거나, 원본 전체로 발표를 다시 나누세요.';
       actions = [
-        {label: '새 행사로 시작', className: 'warn', disabled: running, onClick: confirmNewEvent},
+        {label: '새 행사 시작…', className: 'danger', disabled: running, onClick: confirmNewEvent},
         {label: '다시 나누기', disabled: running, onClick: confirmRegroup}
       ];
     }
     if (!text) {
-      ui.notice.className = 'wfBanner';
+      ui.notice.hidden = true;
       setText(ui.noticeText, '');
       setNoteActions(ui.noticeActions, null);
       return;
     }
     setText(ui.noticeText, text);
     setNoteActions(ui.noticeActions, actions);
-    ui.notice.className = 'wfBanner show warn';
+    ui.notice.className = 'banner warn';
+    ui.notice.hidden = false;
   }
 
   // 버튼이 꺼진 이유 한 줄. 켜져 있으면 ''.
@@ -1133,7 +1114,7 @@
       if (typeof markBackedUp === 'function') markBackedUp();
       refreshStatus().then(function (status) {
         var count = status ? Number(status.resultCount || 0) : 0;
-        var message = 'PDF ' + count + '권이 결과 폴더에 있습니다.';
+        var message = 'PDF ' + count + '개가 결과 폴더에 있습니다.';
         var pages = groupPageSummary(job.result);
         if (pages) message += '\n' + pages;
         showBanner(message, job.result && job.result.emptyGroups && job.result.emptyGroups.length ? 'warn' : 'ok');
@@ -1145,7 +1126,8 @@
       refreshStatus();
       return;
     }
-    showBanner('작업이 실패했습니다. 전체 로그에서 마지막 오류를 확인하세요.', 'error');
+    if (ui.details) ui.details.open = true;
+    showBanner('작업이 실패했습니다. 아래 “자세한 기록”에서 마지막 오류를 확인하세요.', 'error');
     refreshStatus();
   }
 
@@ -1155,9 +1137,9 @@
     var parts = result.groups.map(function (group) {
       return String(group.name) + ' ' + Number(group.pages || 0) + '쪽';
     });
-    var line = '그룹별 쪽 수: ' + parts.join(' · ');
+    var line = '발표별 쪽 수: ' + parts.join(' · ');
     var empty = Array.isArray(result.emptyGroups) ? result.emptyGroups : [];
-    if (empty.length) line += '\n쪽이 없어 빠진 그룹: ' + empty.map(String).join(', ');
+    if (empty.length) line += '\n쪽이 없어 빠진 발표: ' + empty.map(String).join(', ');
     return line;
   }
 
@@ -1196,7 +1178,7 @@
       setText(ui.progressLabel, state.uploadLabel || '사진 업로드');
       ui.barFill.style.width = state.uploadPercent + '%';
       ui.cancelBtn.hidden = true;
-      setText(ui.logTail, '파일별 결과는 사진 넣기 단계 아래에 표시됩니다.');
+      setText(ui.progressNote, '파일별 결과는 사진 넣기 단계 아래에 표시됩니다.');
       setText(ui.logAll, '');
       return;
     }
@@ -1215,7 +1197,7 @@
     ui.barFill.style.width = Math.max(0, Math.min(100, percent)) + '%';
     ui.cancelBtn.hidden = !(job && job.state === 'running');
     ui.cancelBtn.disabled = state.cancelling;
-    setText(ui.logTail, state.logs.slice(-3).join('\n'));
+    setText(ui.progressNote, '');
     setText(ui.logAll, state.logs.join('\n'));
   }
 
@@ -1223,14 +1205,16 @@
     if (!ui.banner) return;
     setText(ui.bannerText, message);
     setNoteActions(ui.bannerActions, actions);
-    ui.banner.className = 'wfBanner show ' + (level || 'info');
+    ui.banner.className = 'banner ' + (level || 'info');
+    ui.banner.hidden = false;
   }
 
   function clearBanner() {
     if (!ui.banner) return;
     setText(ui.bannerText, '');
     setNoteActions(ui.bannerActions, null);
-    ui.banner.className = 'wfBanner';
+    ui.banner.className = 'banner';
+    ui.banner.hidden = true;
   }
 
   // 서버 연결 자체가 끊긴 경우(fetch 가 응답 없이 실패)와 서버가 거절한 경우를 구분한다.
@@ -1247,7 +1231,7 @@
     state.offline = true;
     setControlsDisabled(true);
     showBanner('도구 서버가 꺼졌습니다. 시작 파일(시작하기)을 다시 실행하세요.', 'error', [
-      {label: '다시 연결', className: 'on', onClick: reconnect}
+      {label: '다시 연결', className: 'primary', onClick: reconnect}
     ]);
   }
 
@@ -1322,67 +1306,48 @@
     try { return localStorage.getItem(ORIGIN_SEEN_KEY) === '1'; } catch (_error) { return false; }
   }
 
-  function buildNewEventModal() {
-    ui.neBack = el('div', {className: 'wfModalBack', role: 'dialog', 'aria-modal': 'true'});
-    var modal = el('div', {className: 'wfModal'});
-    modal.appendChild(el('h2', {text: '새 행사 시작'}));
-    modal.appendChild(el('p', {text: '지금 작업을 통째로 보관하고 빈 작업장에서 시작합니다. 삭제하지 않고 작업장 안의 보관 폴더로 옮깁니다.'}));
-    ui.neList = el('ul', {className: 'wfNeList'});
-    modal.appendChild(ui.neList);
-    ui.neOriginals = el('input', {type: 'checkbox'});
-    ui.neOriginalsText = el('span', {text: '원본 사진도 함께 보관'});
-    modal.appendChild(el('label', {className: 'wfNeOption'}, [ui.neOriginals, ui.neOriginalsText]));
-    modal.appendChild(el('p', {
-      className: 'wfRowInfo',
-      text: '체크하지 않으면 원본 폴더의 사진은 그대로 남아, 다음 행사 사진과 섞일 수 있습니다.'
-    }));
-    ui.neError = el('div', {className: 'wfNeError', role: 'alert'});
-    modal.appendChild(ui.neError);
-    ui.neCancel = el('button', {type: 'button', className: 'btn', text: '취소'});
-    ui.neOk = el('button', {type: 'button', className: 'btn on', text: '백업 받고 시작'});
-    ui.neCancel.addEventListener('click', closeNewEvent);
-    ui.neOk.addEventListener('click', runNewEvent);
-    modal.appendChild(el('div', {className: 'wfModalActions'}, [ui.neCancel, ui.neOk]));
-    ui.neBack.appendChild(modal);
-    ui.neBack.addEventListener('click', function (event) {
-      if (event.target === ui.neBack && !state.newEventRunning) closeNewEvent();
-    });
-    document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape' && ui.neBack.classList.contains('show') && !state.newEventRunning) closeNewEvent();
-    });
-    document.body.appendChild(ui.neBack);
-  }
-
+  // 새 행사 시작 확인 — index.html 의 openModal 을 쓴다. 서버 요청이 끝날 때까지 닫히지 않는다(keepOpen).
   function confirmNewEvent() {
     if (state.disabled || isBusy() || state.uploading || !state.status) return;
+    if (typeof openModal !== 'function') return;
     var status = state.status;
     var groups = Array.isArray(status.groups) ? status.groups : [];
     var stored = storedWorkSummary();
     var srcCount = Number(status.srcCount || 0);
-    ui.neList.textContent = '';
-    ui.neList.appendChild(el('li', {
-      text: '작업 그룹 ' + groups.length + '개 · 작업용 사진 ' + photoTotal(status) + '장 (그룹 폴더·그룹 계획·목록)'
+    var list = el('ul');
+    list.appendChild(el('li', {
+      text: '발표 ' + groups.length + '개 · 작업용 사진 ' + photoTotal(status) + '장 (발표 폴더·발표 나누기 계획·목록)'
     }));
-    ui.neList.appendChild(el('li', {
+    list.appendChild(el('li', {
       text: stored.any
-        ? '저장된 보정값 — 모서리 ' + stored.corners + '장 · 완료/제외 ' + stored.status + '장 · 색보정 ' + stored.color +
+        ? '저장된 보정값 — 경계 ' + stored.corners + '장 · 완료/제외 ' + stored.status + '장 · 색보정 ' + stored.color +
           '장 (백업 파일로 저장한 뒤 이 브라우저에서 지웁니다)'
         : '저장된 보정값 — 없음'
     }));
-    ui.neList.appendChild(el('li', {text: '결과 PDF(결과물 폴더)는 그대로 둡니다.'}));
-    setText(ui.neOriginalsText, '원본 사진도 함께 보관 (원본 폴더의 ' + srcCount + '장을 보관 폴더로 옮김)');
-    ui.neOriginals.checked = false;
-    ui.neOriginals.disabled = srcCount === 0;
-    setText(ui.neError, '');
-    ui.neOk.disabled = false;
-    ui.neCancel.disabled = false;
-    setText(ui.neOk, '백업 받고 시작');
-    ui.neBack.classList.add('show');
-    ui.neOk.focus();
-  }
-
-  function closeNewEvent() {
-    ui.neBack.classList.remove('show');
+    list.appendChild(el('li', {text: 'PDF(결과물 폴더)는 그대로 둡니다.'}));
+    var originals = el('input', {type: 'checkbox'});
+    originals.disabled = srcCount === 0;
+    var body = el('div', {}, [
+      el('p', {text: '지금 작업을 통째로 보관하고 빈 작업장에서 시작합니다. 삭제하지 않고 작업장 안의 보관 폴더로 옮깁니다.'}),
+      list,
+      el('label', {className: 'wfNeOption'}, [
+        originals,
+        el('span', {text: '원본 사진도 함께 보관 (원본 폴더의 ' + srcCount + '장을 보관 폴더로 옮김)'})
+      ]),
+      el('p', {
+        className: 'wfRowInfo',
+        text: '체크하지 않으면 원본 폴더의 사진은 그대로 남아, 다음 행사 사진과 섞일 수 있습니다.'
+      })
+    ]);
+    ui.neModal = openModal({
+      title: '새 행사 시작',
+      node: body,
+      ok: '백업 받고 시작',
+      okKind: 'danger',
+      keepOpen: true,
+      canClose: function () { return !state.newEventRunning; },
+      onOk: function () { runNewEvent(!!originals.checked); }
+    });
   }
 
   // 이 도구가 쓰는 localStorage 키를 모두 지우고(index.html 의 목록 + 이 패널의 접기 상태) 새로고침한다.
@@ -1397,35 +1362,32 @@
     location.reload();
   }
 
-  function runNewEvent() {
-    if (state.newEventRunning) return;
+  function runNewEvent(moveOriginals) {
+    var modal = ui.neModal;
+    if (state.newEventRunning || !modal) return;
     if (typeof collectBackup !== 'function') {
-      setText(ui.neError, '현재 보정값을 수집하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도하세요.');
+      modal.setError('현재 보정값을 수집하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도하세요.');
       return;
     }
     var backup;
     try {
       backup = collectBackup();
     } catch (error) {
-      setText(ui.neError, '현재 보정값을 읽지 못했습니다.\n' + error.message);
+      modal.setError('현재 보정값을 읽지 못했습니다.\n' + error.message);
       return;
     }
     state.newEventRunning = true;
-    ui.neOk.disabled = true;
-    ui.neCancel.disabled = true;
-    setText(ui.neOk, '보관하는 중…');
-    setText(ui.neError, '');
+    modal.setBusy(true, '보관하는 중…');
+    modal.setError('');
     api('/api/new-event', {
       method: 'POST',
-      json: {backup: backup, moveOriginals: !!ui.neOriginals.checked}
+      json: {backup: backup, moveOriginals: !!moveOriginals}
     }).then(function (payload) {
       clearToolStorageAndReload('이전 작업을 ' + payload.archive + ' 에 보관했습니다');
     }).catch(function (error) {
       state.newEventRunning = false;
-      ui.neOk.disabled = false;
-      ui.neCancel.disabled = false;
-      setText(ui.neOk, '백업 받고 시작');
-      setText(ui.neError, isNetworkError(error)
+      modal.setBusy(false, '백업 받고 시작');
+      modal.setError(isNetworkError(error)
         ? '도구 서버가 꺼졌습니다. 시작 파일(시작하기)을 다시 실행하세요.'
         : ((error && (error.detail || error.message)) || '요청에 실패했습니다.'));
     });
@@ -1444,7 +1406,7 @@
 
   // ===================== 이 주소에 저장된 작업 없음 안내 =====================
   function buildLocalBand(main) {
-    var note = buildNote('wfBanner warn');
+    var note = buildNote('banner warn');
     note.root.id = 'wfLocalBand';
     ui.localBand = note.root;
     ui.localBandText = note.text;
@@ -1460,7 +1422,7 @@
   }
 
   function hideLocalBand() {
-    ui.localBand.className = 'wfBanner warn';
+    ui.localBand.hidden = true;
     setText(ui.localBandText, '');
     setNoteActions(ui.localBandActions, null);
   }
@@ -1488,10 +1450,10 @@
         '이 주소(' + location.host + ')에는 저장된 보정값이 없습니다. 다른 주소(포트)에서 작업했다면 ' +
         '최근 백업' + (when ? '(' + when + ')' : '') + '을 불러올 수 있습니다.');
       setNoteActions(ui.localBandActions, [
-        {label: '최근 백업 불러오기', className: 'on', onClick: function () { loadLatestBackup(latest.name); }},
+        {label: '최근 백업 불러오기', className: 'primary', onClick: function () { loadLatestBackup(latest.name); }},
         {label: '닫기', onClick: dismissLocalBand}
       ]);
-      ui.localBand.className = 'wfBanner warn show';
+      ui.localBand.hidden = false;
     }).catch(function () { /* 안내 띠는 부가 기능 — 목록을 못 받으면 조용히 넘어간다 */ });
   }
 
@@ -1522,7 +1484,7 @@
 
   function maybeRestoreBandButtons(name) {
     setNoteActions(ui.localBandActions, [
-      {label: '최근 백업 불러오기', className: 'on', onClick: function () { loadLatestBackup(name); }},
+      {label: '최근 백업 불러오기', className: 'primary', onClick: function () { loadLatestBackup(name); }},
       {label: '닫기', onClick: dismissLocalBand}
     ]);
   }
