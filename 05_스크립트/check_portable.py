@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 # Windows 콘솔 기본 인코딩(cp949)에는 '—'·'·'·'⚠' 같은 문자가 없어, 그대로 print 하면
@@ -64,12 +65,37 @@ REMOVED_MARKERS = (
 GETCWD_PATTERN = re.compile(r"\bos\.getcwd\s*\(")
 
 
+def git_ignored(root: Path, rels: list[str]) -> set[str]:
+    """git 이 무시하는 상대경로 집합. git 없음·비저장소·실패 시 빈 집합(전부 검사)."""
+    if not rels:
+        return set()
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-z", "--stdin"],
+            input="\0".join(rels).encode("utf-8"),
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if proc.returncode not in (0, 1):  # 1 = 무시 대상 없음, 그 외는 실패
+        return set()
+    return {p.decode("utf-8", "replace") for p in proc.stdout.split(b"\0") if p}
+
+
 def iter_text_files(root: Path):
+    candidates = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or any(part in EXCLUDED_DIRS for part in path.parts):
             continue
         rel = path.relative_to(root).as_posix()
         if rel in EXCLUDED_FILES:
+            continue
+        candidates.append((path, rel))
+    # 로컬 전용(.gitignore·.git/info/exclude) 파일은 배포에 들어가지 않으므로 검사에서 뺀다.
+    ignored = git_ignored(root, [rel for _, rel in candidates])
+    for path, rel in candidates:
+        if rel in ignored:
             continue
         try:
             data = path.read_bytes()

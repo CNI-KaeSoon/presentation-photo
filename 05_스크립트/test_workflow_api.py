@@ -63,10 +63,16 @@ def make_fake_venv(pkg: Path) -> None:
     bindir.mkdir(parents=True, exist_ok=True)
     name = "python.exe" if sys.platform == "win32" else "python3"
     target = bindir / name
-    try:
-        target.symlink_to(Path(sys.executable).resolve())
-    except OSError:
+    if sys.platform == "win32":
         shutil.copy2(sys.executable, target)
+        target.chmod(0o755)
+    else:
+        # resolve() 하면 시스템 파이썬을 가리켜 venv site-packages(cv2 등)를 잃는다.
+        # 테스트를 실행한 venv 인터프리터를 그대로 exec 하는 셸 래퍼를 쓴다.
+        target.write_text(
+            f'#!/bin/sh\nexec "{os.path.abspath(sys.executable)}" "$@"\n',
+            encoding="utf-8",
+        )
         target.chmod(0o755)
     status = {
         "ok": True,
