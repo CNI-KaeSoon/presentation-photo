@@ -243,7 +243,7 @@ body.nodata #nav{display:none}
 .slideItem:hover{background:var(--surface-2)}
 .slideItem.active{background:var(--primary-soft);box-shadow:inset 3px 0 0 0 var(--primary);font-weight:700}
 .slideItem.selected{background:var(--warn-soft);box-shadow:inset 3px 0 0 0 var(--warn)}
-.slideItem.active.selected{background:linear-gradient(90deg,var(--warn-soft) 0,var(--warn-soft) 42%,var(--primary-soft) 42%,var(--primary-soft) 100%)}
+.slideItem.active.selected{background:var(--warn-soft);box-shadow:inset 4px 0 0 0 var(--primary)}   /* 선택 배경 + 현재 표시는 왼쪽 파란 막대 */
 .slideItem.active .badge.auto{background:var(--surface)}   /* 선택 줄 배경과 같은 색이라 알약이 묻히지 않게 */
 .slideItem.excluded .thumb{opacity:.45}
 .slideItem.excluded .name{opacity:.55;text-decoration:line-through}
@@ -284,10 +284,11 @@ body.nodata #nav{display:none}
 .ttl .pageTitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ttl .titleRow .state{flex:none}
 .ttl .sub{color:var(--muted);font-size:var(--f2);white-space:nowrap}
-.panes{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);gap:var(--s3);padding:0 var(--s4) var(--s2)}
+.panes{--spL:52.83fr;--spR:47.17fr;flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,var(--spL)) 0 minmax(0,var(--spR));gap:var(--s3);padding:0 var(--s4) var(--s2)}
 .pane{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border:1px solid var(--border);border-radius:var(--r3);box-shadow:var(--shadow-card)}
 .paneHead{flex:none;display:flex;align-items:center;justify-content:space-between;gap:var(--s2);padding:var(--s2) var(--s3);font-weight:700}
-.paneHead .muted{font-weight:500;text-align:right}
+.paneHead>span:first-child{flex:none;white-space:nowrap}   /* 칸 제목은 줄어들거나 줄바꿈되지 않는다 */
+.paneHead .muted{min-width:0;font-weight:500;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}   /* 안내 문구는 좁으면 말줄임 */
 /* 사진 칸: 남는 크기를 다 쓰고, 안의 사진 상자는 그 안에 비율대로 딱 맞게 들어간다(cqw/cqh) */
 .paneStage{position:relative;flex:1;min-height:0;container-type:size;display:grid;place-items:center;margin:0 var(--s2) var(--s2);padding:var(--s2);border-radius:var(--r2);background:var(--photo-bg)}
 .stagePanel .paneStage{container-type:inline-size;display:flex;flex-direction:column;align-items:stretch;gap:var(--s2)}   /* 도구줄(위) + 사진 칸(남는 높이) */
@@ -358,6 +359,15 @@ body.colormode .colorPanel{display:flex}
 body.colormode .cornerHandle,body.colormode .edgeHandle{display:none}
 body.colormode .stagePanel{display:none}
 body.colormode .panes{grid-template-columns:minmax(0,1fr) 380px}
+body.colormode .paneSplit{display:none}
+/* 원본|미리보기 너비 조절 바 — 0폭 칸 위에 걸쳐 두 칸 사이 gap 한가운데에 놓인다 */
+.paneSplit{position:relative;z-index:8;width:16px;justify-self:center;align-self:stretch;cursor:col-resize;touch-action:none;user-select:none;-webkit-user-select:none;outline:none}
+.paneSplit::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;margin-left:-1px;border-radius:var(--r-pill);background:var(--border-strong);transition:background .15s}
+.paneSplit::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:28px;margin:-16px 0 0 -5px;border-radius:var(--r-pill);background:var(--muted);border:2px solid var(--bg);box-sizing:content-box;transition:background .15s}
+.paneSplit:hover::before,.paneSplit:focus-visible::before,.paneSplit.dragging::before{background:var(--primary)}
+.paneSplit:hover::after,.paneSplit:focus-visible::after,.paneSplit.dragging::after{background:var(--primary)}
+body.splitdrag{cursor:col-resize;user-select:none;-webkit-user-select:none}
+body.splitdrag iframe,body.splitdrag canvas{pointer-events:none}
 .sliderGrid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s2)}
 .sliderRow{display:grid;grid-template-columns:104px 1fr 40px 30px;gap:var(--s1);align-items:center}
 .sliderRow>label{font-size:var(--f1);font-weight:700;color:var(--text);display:flex;align-items:center;flex-wrap:wrap;gap:4px}
@@ -399,6 +409,7 @@ body.eyedropping #preview{cursor:crosshair}
   .edTop{flex-wrap:wrap;padding:var(--s2) var(--s3) var(--s1)}
   .panes{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-rows:minmax(460px,auto);padding:0 var(--s3) var(--s2);overflow:visible;flex:none}
   .pane{min-height:460px}
+  .paneSplit{display:none}
   body.colormode .panes{grid-template-columns:minmax(0,1fr)}
   .edBottom{padding:var(--s1) var(--s3) var(--s3)}
   #deckView{flex:none;margin:0 var(--s3) var(--s2);min-height:60vh}
@@ -505,7 +516,7 @@ body.eyedropping #preview{cursor:crosshair}
       </section>
       <div class="panes">
         <section class="pane stagePanel">
-          <div class="paneHead"><span>원본 사진</span><span class="muted">손잡이를 끌어 슬라이드 경계에 맞추세요</span></div>
+          <div class="paneHead"><span>원본 사진</span><span class="muted" title="손잡이를 끌어 슬라이드 경계에 맞추세요">손잡이를 끌어 슬라이드 경계에 맞추세요</span></div>
           <div class="paneStage">
             <!-- 경계 도구줄: 사진 위 한 줄(넓으면) 또는 두 줄. 모든 버튼에 글자 라벨이 붙는다(아이콘만 표시는 아주 좁은 칸에서만). -->
             <div class="tools" role="toolbar" aria-label="경계 도구">
@@ -533,6 +544,7 @@ body.eyedropping #preview{cursor:crosshair}
             </div></div>
           </div>
         </section>
+        <div id="paneSplit" class="paneSplit" role="separator" aria-orientation="vertical" aria-label="원본 사진과 보정 미리보기 너비 조절 (좌우 화살표 키 · 더블클릭하면 기본값)" tabindex="0" aria-valuemin="25" aria-valuemax="75" aria-valuenow="53" title="끌어서 두 칸 너비를 조절합니다. 더블클릭하면 기본 비율로 돌아갑니다."></div>
         <section class="pane previewPane">
           <div class="paneHead"><span>보정 미리보기</span><span id="pvInfo" class="muted"></span></div>
           <div id="previewWrap" class="paneStage previewWrap">
@@ -654,6 +666,7 @@ const LS_COLOR='slideColor_v1';           // {file: {brightness,contrast,...}} �
 const LS_SHOW_EXCLUDED='slideShowExcluded_v1';
 // 백업 유도용 로컬 메타. ⚠️ BACKUP_KEYS 에 넣지 않는다 — 백업 JSON 스키마를 기존 6키 그대로 유지해야
 // color_render.py(load_backup)와 구 백업 파일 호환이 깨지지 않는다.
+const LS_SPLIT='slideSplit_v1';            // 원본|미리보기 너비 비율(왼쪽 %) — 화면 선호라 백업·새 행사 초기화 대상 아님
 const LS_BACKUP_META='slideBackupMeta_v1'; // {at:<epoch ms>}
 const LS_DIRTY='slideColorDirty_v1';       // [file,...] — 마지막 백업 이후 색보정한 슬라이드
 function migrateStoreKey(oldKey,newKey){
@@ -1614,6 +1627,26 @@ function renderNav(){
   root.innerHTML=html||`<div class="navEmpty">«${FILTER_LABEL[navFilter]}»에 해당하는 사진이 없습니다.<br><button type="button" class="btn sm" style="margin-top:var(--s2)" data-filter="all">전체 보기</button></div>`;
   updateAutoDetectUi();   // 발표 메뉴·일괄바의 자동 찾기 상태도 현재 서버 상태를 따라간다
   updateHeader();
+  primeThumbs();
+}
+// 목록을 다시 그리면 화면에 보이는 썸네일이 lazy 판정을 기다리다 회색 빈칸으로 남을 수 있다(PDF 서랍이 열려
+// 레이아웃이 바뀐 직후 등). 사이드바 보이는 영역(위아래 한 화면)의 썸네일은 즉시 불러오고, 실패한 것은 한 번 다시 시도한다.
+function primeThumbs(){
+  requestAnimationFrame(()=>{
+    const box=document.getElementById('folderList');
+    if(!box)return;
+    const r=box.getBoundingClientRect(),m=r.height;
+    box.querySelectorAll('img.thumb').forEach(img=>{
+      if(img.complete&&img.naturalWidth>0)return;
+      const t=img.getBoundingClientRect();
+      if(!t.height||t.bottom<r.top-m||t.top>r.bottom+m)return;
+      img.loading='eager';
+      if(!img.dataset.retry)img.addEventListener('error',()=>{
+        if(img.dataset.retry)return;
+        img.dataset.retry='1';const u=img.getAttribute('src');img.removeAttribute('src');img.src=u;
+      },{once:true});
+    });
+  });
 }
 function scrollActiveIntoView(){
   const a=document.querySelector('#folderList .slideItem.active');
@@ -1880,6 +1913,7 @@ function updateRatioButtons(){
   const r=ratioFor(slide.file);
   document.querySelectorAll('.ratioBtn').forEach(btn=>btn.setAttribute('aria-checked',btn.dataset.ratio===r?'true':'false'));
   setTextById('pvInfo','출력 '+(r==='free'?'자유 비율':r));
+  document.getElementById('pvInfo').title=document.getElementById('pvInfo').textContent;
 }
 
 document.querySelectorAll('.ratioBtn').forEach(btn=>btn.onclick=()=>{
@@ -2175,10 +2209,82 @@ document.querySelectorAll('.edgeHandle').forEach(handle=>{
 });
 
 window.addEventListener('resize',()=>{layoutStage();positionHandles();scheduleRender();});
+// PDF 서랍이 열리고 닫히는 전환이 끝나면 사이드바 썸네일이 다 보이는지 다시 확인한다
+document.addEventListener('transitionend',e=>{if(e.target&&e.target.id==='wfDrawer')primeThumbs();});
 // 창 크기뿐 아니라 사이드바 접기·단계 패널 열기로 사진 칸이 바뀔 때도 손잡이·경계선을 다시 맞춘다.
 if(window.ResizeObserver){
   new ResizeObserver(()=>{if(currentSlide()&&!colorMode)positionHandles();}).observe(document.getElementById('stage'));
 }
+
+// ---- 원본|미리보기 너비 조절 바 ----
+const SPLIT_DEFAULT=52.83;   // 기존 1.12fr : 1fr
+(function(){
+  const bar=document.getElementById('paneSplit'),panes=bar&&bar.parentElement;
+  if(!bar||!panes)return;
+  let pct=SPLIT_DEFAULT,dragging=false,raf=0;
+  // 두 칸이 나눠 갖는 폭 = 안쪽 폭 - 칸 사이 간격 2개(0폭 바 칸 양옆)
+  const geo=()=>{
+    const cs=getComputedStyle(panes);
+    const gap=parseFloat(cs.columnGap)||0,padL=parseFloat(cs.paddingLeft)||0,padR=parseFloat(cs.paddingRight)||0;
+    return {gap,padL,avail:panes.clientWidth-padL-padR-2*gap};
+  };
+  const bounds=()=>{
+    const w=geo().avail;
+    if(w<300)return [25,75];   // 숨겨진 상태(시작 화면 등)에서는 폭을 알 수 없다
+    const lo=Math.min(50,Math.max(25,280/w*100));
+    return [lo,100-lo];
+  };
+  const clamp=v=>{const [lo,hi]=bounds();return Math.max(lo,Math.min(hi,v));};
+  function apply(v,save){
+    pct=clamp(v);
+    panes.style.setProperty('--spL',pct.toFixed(2)+'fr');
+    panes.style.setProperty('--spR',(100-pct).toFixed(2)+'fr');
+    const [lo,hi]=bounds();
+    bar.setAttribute('aria-valuenow',String(Math.round(pct)));
+    bar.setAttribute('aria-valuemin',String(Math.ceil(lo)));
+    bar.setAttribute('aria-valuemax',String(Math.floor(hi)));
+    if(save){try{localStorage.setItem(LS_SPLIT,pct.toFixed(2));}catch{}}
+    relayout();
+  }
+  function relayout(){
+    if(raf)return;
+    raf=requestAnimationFrame(()=>{raf=0;layoutStage();if(currentSlide()&&!colorMode)positionHandles();scheduleRender();});
+  }
+  try{const v=parseFloat(localStorage.getItem(LS_SPLIT));if(isFinite(v))pct=v;}catch{}
+  apply(pct,false);
+  bar.addEventListener('pointerdown',ev=>{
+    if(ev.button!==undefined&&ev.button!==0)return;
+    dragging=true;bar.setPointerCapture(ev.pointerId);
+    bar.classList.add('dragging');document.body.classList.add('splitdrag');
+    ev.preventDefault();
+  });
+  bar.addEventListener('pointermove',ev=>{
+    if(!dragging)return;
+    const r=panes.getBoundingClientRect(),g=geo();
+    if(g.avail<=0)return;
+    apply((ev.clientX-r.left-g.padL-g.gap)/g.avail*100,false);
+  });
+  const end=ev=>{
+    if(!dragging)return;
+    dragging=false;
+    try{bar.releasePointerCapture(ev.pointerId);}catch{}
+    bar.classList.remove('dragging');document.body.classList.remove('splitdrag');
+    apply(pct,true);
+  };
+  bar.addEventListener('pointerup',end);
+  bar.addEventListener('pointercancel',end);
+  bar.addEventListener('dblclick',()=>{apply(SPLIT_DEFAULT,false);try{localStorage.removeItem(LS_SPLIT);}catch{}});
+  bar.addEventListener('keydown',ev=>{
+    if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){
+      apply(pct+(ev.key==='ArrowLeft'?-2:2),true);ev.preventDefault();
+    }else if(ev.key==='Home'||ev.key==='End'){
+      apply(ev.key==='Home'?0:100,true);ev.preventDefault();
+    }
+  });
+  // 창 크기가 바뀌거나 숨겨졌던 화면이 나타나면 최소 폭(280px·25%)을 다시 지킨다
+  if(window.ResizeObserver)new ResizeObserver(()=>{if(!dragging)apply(pct,false);}).observe(panes);
+  else window.addEventListener('resize',()=>apply(pct,false));
+})();
 
 function scheduleRender(){
   if(renderQueued)return;
