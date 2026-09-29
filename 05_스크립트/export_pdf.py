@@ -252,7 +252,8 @@ def scan_group_images(root: Path) -> list[tuple[str, str]]:
         return found
     for child in children:
         img_dir = child / "img"
-        if child.name == "slide_tool" or not img_dir.is_dir():
+        # `_` 로 시작하는 폴더(_이전작업_… 보관 폴더)는 그룹이 아니다.
+        if child.name == "slide_tool" or child.name.startswith("_") or not img_dir.is_dir():
             continue
         if not is_single_basename(child.name) or child.name.startswith("."):
             continue

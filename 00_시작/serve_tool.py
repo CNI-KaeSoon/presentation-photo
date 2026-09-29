@@ -66,6 +66,12 @@ STREAM_CHUNK_BYTES = 1024 * 1024
 PDF_SUMMARY_PREFIX = "@@PDF_SUMMARY@@ "
 # 업로드 사진의 수정 시각(File.lastModified, epoch ms)으로 받아들이는 범위.
 MIN_LAST_MODIFIED_MS = 946_684_800_000          # 2000-01-01
+# 새 행사 시작 때 이전 작업을 옮겨 두는 폴더 이름(02_작업장 바로 아래). `_` 로 시작하는 폴더는
+# 보관·예약용이라 그룹으로 취급하지 않는다(그룹 목록·내보내기·자동 찾기 모두 제외).
+ARCHIVE_PREFIX = "_이전작업_"
+BACKUP_NAME_RE = re.compile(r"^slide_tool_backup_[0-9]{8}-[0-9]{6}(?:_[0-9]{1,3})?\.json$")
+MAX_BACKUP_LIST = 30
+MAX_NEW_EVENT_BODY_BYTES = 64 * 1024 * 1024
 MAX_PHOTO_ORDER_ITEMS = 20_000
 MAX_PHOTO_ORDER_KEY_CHARS = 1024
 WINDOWS_RESERVED = frozenset(
@@ -148,6 +154,11 @@ def _error_payload(code: str, detail: str) -> dict[str, object]:
 
 def nfc(value: str) -> str:
     return unicodedata.normalize("NFC", value)
+
+
+def is_group_folder_name(name: str) -> bool:
+    """작업장 직계 폴더 이름이 그룹 후보인지. slide_tool·`_`(보관/예약)·`.`(숨김)로 시작하면 아니다."""
+    return name != "slide_tool" and not name.startswith(("_", "."))
 
 
 def resolve_pkg_root(root: Path, pkg_root_arg: Optional[str]) -> Optional[Path]:
@@ -624,6 +635,8 @@ class Lifecycle:
         self.stop_reason: Optional[str] = None
         self.shutdown_started = False
         self.goodbye_pending = threading.Event()
+        # --no-watchdog 이면 탭이 닫혀도(/goodbye) 서버를 끄지 않는다 — main 이 False 로 바꾼다.
+        self.goodbye_enabled = True
 
     def touch(self) -> None:
         with self.lock:
@@ -647,7 +660,11 @@ class Lifecycle:
     def schedule_goodbye(self, server: http.server.ThreadingHTTPServer) -> None:
         """응답 후 종료하되 새 핑이나 실행 중인 잡이 있으면 안전하게 미룬다."""
         with self.lock:
-            if self.shutdown_started or self.goodbye_pending.is_set():
+            if (
+                not self.goodbye_enabled
+                or self.shutdown_started
+                or self.goodbye_pending.is_set()
+            ):
                 return
             self.goodbye_pending.set()
             generation = self.beat_generation
@@ -814,6 +831,12 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             if endpoint == "/api/job":
                 self.api_job()
                 return
+            if endpoint == "/api/backups":
+                self.api_backups()
+                return
+            if endpoint == "/api/backup":
+                self.api_backup()
+                return
             self._error(404, "not_found", "API 경로를 찾을 수 없습니다.")
             return
         super().do_GET()
@@ -845,6 +868,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             "/api/prepare": self.api_prepare,
             "/api/export-pdf": self.api_export_pdf,
             "/api/auto-detect": self.api_auto_detect,
+            "/api/new-event": self.api_new_event,
             "/api/job/cancel": self.api_job_cancel,
         }
         handler = routes.get(endpoint)
@@ -883,7 +907,11 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
         try:
             for folder in sorted(self.workflow.work.iterdir(), key=lambda path: path.name):
                 image_dir = folder / "img"
-                if not folder.is_dir() or folder.name == "slide_tool" or not image_dir.is_dir():
+                if (
+                    not folder.is_dir()
+                    or not is_group_folder_name(folder.name)
+                    or not image_dir.is_dir()
+                ):
                     continue
                 try:
                     count = sum(
@@ -912,10 +940,294 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
                 "env": env,
                 "srcCount": self._src_count(),
                 "worktree": (self.workflow.work / "worktree.json").is_file(),
+                "planMismatch": self._plan_mismatch(),
                 "dataJs": (self.workflow.work / "slide_tool" / "data.js").is_file(),
                 "groups": groups,
                 "job": current.snapshot(0) if current is not None else None,
                 "resultCount": result_count,
+            }
+        )
+
+    def _plan_mismatch(self) -> Optional[dict[str, int]]:
+        """worktree.json 계획의 사진 이름과 원본 폴더의 사진 이름을 견줘 어긋난 수를 센다.
+
+        missing = 계획에는 있는데 원본에 없는 사진, added = 원본에는 있는데 계획에 없는 사진.
+        계획 파일이 없거나 읽을 수 없으면 None(견줄 기준이 없다).
+        """
+        if self.workflow.work is None or self.workflow.src is None:
+            return None
+        plan_path = self.workflow.work / "worktree.json"
+        try:
+            doc = json.loads(plan_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError):
+            return None
+        groups = doc.get("groups") if isinstance(doc, dict) else None
+        if not isinstance(groups, dict):
+            return None
+        planned: set[str] = set()
+        for names in groups.values():
+            if isinstance(names, list):
+                planned.update(nfc(str(name)) for name in names)
+        present: set[str] = set()
+        try:
+            for path in self.workflow.src.rglob("*"):
+                if (
+                    path.is_file()
+                    and not path.name.startswith(".")
+                    and path.suffix.lower() in UPLOAD_EXTS
+                ):
+                    present.add(nfc(path.name))
+        except OSError:
+            return None
+        return {"missing": len(planned - present), "added": len(present - planned)}
+
+    def api_backups(self) -> None:
+        """03_결과물/백업/ 의 백업 파일 목록(최신 순). 파일명은 서버가 만든 형식만 인정한다."""
+        if not self._workflow_required():
+            return
+        assert self.workflow.out is not None
+        backup_dir = self.workflow.out / "백업"
+        rows: list[tuple[float, str, int]] = []
+        try:
+            entries = list(backup_dir.iterdir()) if backup_dir.is_dir() else []
+        except OSError:
+            entries = []
+        for path in entries:
+            if not BACKUP_NAME_RE.match(path.name) or path.is_symlink():
+                continue
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            if path.is_file():
+                rows.append((info.st_mtime, path.name, info.st_size))
+        rows.sort(reverse=True)
+        self._send_json(
+            {
+                "ok": True,
+                "backups": [
+                    {"name": name, "size": size, "modified": mtime}
+                    for mtime, name, size in rows[:MAX_BACKUP_LIST]
+                ],
+            }
+        )
+
+    def api_backup(self) -> None:
+        """백업 파일 하나의 내용. name 은 목록의 이름과 같은 형식만 허용해 경로 탈출을 막는다."""
+        if not self._workflow_required():
+            return
+        assert self.workflow.out is not None
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        name = query.get("name", [""])[0]
+        if not BACKUP_NAME_RE.match(name):
+            self._error(400, "bad_backup_name", "백업 파일 이름 형식이 올바르지 않습니다.")
+            return
+        backup_dir = self.workflow.out / "백업"
+        path = backup_dir / name
+        try:
+            root = backup_dir.resolve()
+            if path.is_symlink() or not path.is_file() or not is_within(path.resolve(), root):
+                raise FileNotFoundError(name)
+            if path.stat().st_size > MAX_EXPORT_BODY_BYTES:
+                self._error(413, "body_too_large", "백업 파일이 64MB 상한을 넘었습니다.")
+                return
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, NotADirectoryError):
+            self._error(404, "backup_not_found", "백업 파일을 찾지 못했습니다.")
+            return
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            self._error(422, "bad_backup", f"백업 파일을 읽지 못했습니다: {exc}")
+            return
+        if not isinstance(doc, dict) or doc.get("_type") != "slide_tool_backup":
+            self._error(422, "bad_backup", "슬라이드 도구 백업 파일이 아닙니다.")
+            return
+        self._send_json({"ok": True, "name": name, "backup": doc})
+
+    @staticmethod
+    def _count_group_images(folder: Path) -> int:
+        try:
+            return sum(
+                1
+                for path in (folder / "img").iterdir()
+                if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+            )
+        except OSError:
+            return 0
+
+    @staticmethod
+    def _unique_child(parent: Path, name: str) -> Path:
+        for index in range(1, 1000):
+            candidate = parent / (name if index == 1 else f"{name}_{index}")
+            if not os.path.lexists(candidate):
+                return candidate
+        raise OSError("같은 이름이 너무 많아 보관 이름을 정할 수 없습니다.")
+
+    def api_new_event(self) -> None:
+        """이전 작업(그룹 폴더·계획·목록, 선택 시 원본 사진)을 보관 폴더로 옮기고 작업장을 비운다.
+
+        요청 {"backup": {...}|없음, "moveOriginals": false}. 삭제는 하지 않고 이동만 한다.
+        03_결과물(PDF)과 slide_tool 의 도구 파일은 건드리지 않는다.
+        응답 {"ok", "archive": "_이전작업_YYMMDD_HHMM", "moved": {...}, "backup": 백업 상대경로|null}.
+        """
+        payload = self._read_json_body(MAX_NEW_EVENT_BODY_BYTES)
+        if payload is None:
+            return
+        move_originals = payload.get("moveOriginals", False)
+        backup = payload.get("backup")
+        if not isinstance(move_originals, bool):
+            self._error(400, "bad_request", "moveOriginals는 true 또는 false여야 합니다.")
+            return
+        if backup is not None and not isinstance(backup, dict):
+            self._error(400, "bad_backup", "backup은 JSON 객체여야 합니다.")
+            return
+
+        assert self.workflow.work is not None
+        assert self.workflow.src is not None
+        assert self.workflow.out is not None
+        work = self.workflow.work
+        src = self.workflow.src
+        plan_path = work / "worktree.json"
+        data_path = work / "slide_tool" / "data.js"
+
+        with self.workflow.jobs.lock:
+            current = self.workflow.jobs.current
+            if current is not None and current.state == "running":
+                self._error(409, "busy", "다른 작업이 실행 중입니다.")
+                return
+
+            # ---- 옮길 대상 수집 (이 단계에서는 아무것도 바꾸지 않는다) ----
+            try:
+                group_dirs = sorted(
+                    (
+                        child
+                        for child in work.iterdir()
+                        if is_group_folder_name(child.name)
+                        and child.is_dir()
+                        and not child.is_symlink()
+                        and (child / "img").is_dir()
+                    ),
+                    key=lambda path: path.name,
+                )
+            except OSError as exc:
+                self._error(500, "group_read_failed", f"그룹 목록을 읽지 못했습니다: {exc}")
+                return
+            photo_count = sum(self._count_group_images(folder) for folder in group_dirs)
+            original_entries: list[Path] = []
+            original_count = 0
+            if move_originals:
+                try:
+                    for entry in sorted(src.iterdir(), key=lambda path: path.name):
+                        if entry.name.startswith(".") or entry.is_symlink():
+                            continue
+                        if entry.is_file() and entry.suffix.lower() in UPLOAD_EXTS:
+                            original_entries.append(entry)
+                            original_count += 1
+                        elif entry.is_dir():
+                            inner = sum(
+                                1
+                                for path in entry.rglob("*")
+                                if path.is_file()
+                                and not path.name.startswith(".")
+                                and path.suffix.lower() in UPLOAD_EXTS
+                            )
+                            if inner:
+                                original_entries.append(entry)
+                                original_count += inner
+                except OSError as exc:
+                    self._error(500, "src_read_failed", f"원본 폴더를 읽지 못했습니다: {exc}")
+                    return
+            has_plan = plan_path.is_file()
+            has_data = data_path.is_file()
+            if not (group_dirs or has_plan or has_data or original_entries):
+                self._error(409, "nothing_to_archive", "보관할 이전 작업이 없습니다.")
+                return
+
+            # ---- 백업 저장 (실패하면 아무것도 옮기지 않는다) ----
+            backup_path: Optional[Path] = None
+            if backup is not None:
+                try:
+                    backup_path = self._save_backup(backup)
+                except ValueError as exc:
+                    self._error(413, "body_too_large", str(exc))
+                    return
+                except OSError as exc:
+                    self._error(500, "backup_save_failed", f"백업을 저장하지 못했습니다: {exc}")
+                    return
+
+            # ---- 보관 폴더를 만들고 옮긴다 (실패하면 옮긴 것을 되돌린다) ----
+            stamp = dt.datetime.now().strftime("%y%m%d_%H%M")
+            archive: Optional[Path] = None
+            moved: list[tuple[Path, Path]] = []   # (옮긴 뒤 경로, 원래 경로)
+            try:
+                for index in range(1, 1000):
+                    candidate = work / (
+                        f"{ARCHIVE_PREFIX}{stamp}" if index == 1 else f"{ARCHIVE_PREFIX}{stamp}_{index}"
+                    )
+                    try:
+                        candidate.mkdir()
+                    except FileExistsError:
+                        continue
+                    archive = candidate
+                    break
+                if archive is None:
+                    raise OSError("보관 폴더 이름을 정할 수 없습니다.")
+                if backup_path is not None:
+                    shutil.copyfile(backup_path, archive / "백업.json")
+                if original_entries:
+                    originals_dir = archive / "01_원본사진"
+                    originals_dir.mkdir()
+                    for entry in original_entries:
+                        target = self._unique_child(originals_dir, entry.name)
+                        entry.rename(target)
+                        moved.append((target, entry))
+                for source, keep_name in ((plan_path, "worktree.json"), (data_path, "data.js")):
+                    if source.is_file():
+                        target = self._unique_child(archive, keep_name)
+                        source.rename(target)
+                        moved.append((target, source))
+                for folder in group_dirs:
+                    target = self._unique_child(archive, folder.name)
+                    folder.rename(target)
+                    moved.append((target, folder))
+            except OSError as exc:
+                rollback_errors: list[str] = []
+                for target, origin in reversed(moved):
+                    try:
+                        if os.path.lexists(target) and not os.path.lexists(origin):
+                            target.rename(origin)
+                    except OSError as rollback_exc:
+                        rollback_errors.append(f"{origin.name}: {rollback_exc}")
+                if archive is not None:
+                    try:
+                        for leftover in (archive / "01_원본사진", archive):
+                            if leftover.is_dir() and not any(leftover.iterdir()):
+                                leftover.rmdir()
+                    except OSError:
+                        pass
+                if rollback_errors:
+                    self._error(
+                        500,
+                        "new_event_rollback_failed",
+                        f"새 행사 시작과 복구에 실패했습니다: {exc}; " + "; ".join(rollback_errors),
+                    )
+                else:
+                    self._error(500, "new_event_failed", f"이전 작업을 옮기지 못했습니다: {exc}")
+                return
+
+        self._send_json(
+            {
+                "ok": True,
+                "archive": archive.name,
+                "moved": {
+                    "groups": len(group_dirs),
+                    "photos": photo_count,
+                    "worktree": has_plan,
+                    "dataJs": has_data,
+                    "originals": original_count,
+                },
+                "backup": (
+                    f"{backup_path.parent.name}/{backup_path.name}" if backup_path is not None else None
+                ),
             }
         )
 
@@ -1027,6 +1339,8 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             return
         source_name, source_reason = safe_group_name(payload.get("from"))
         target_name, target_reason = safe_group_name(payload.get("to"))
+        if target_name is not None and not is_group_folder_name(target_name):
+            target_name, target_reason = None, "밑줄(_)로 시작하는 이름은 보관용이라 그룹 이름으로 쓸 수 없습니다."
         if source_name is None:
             self._error(400, "bad_group_name", source_reason)
             return
@@ -1303,7 +1617,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             return groups
         for child in children:
             if (
-                child.name == "slide_tool"
+                not is_group_folder_name(child.name)
                 or not child.is_dir()
                 or not (child / "img").is_dir()
             ):
@@ -1761,6 +2075,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.port != DEFAULT_PORT:
         print("주의: 포트가 바뀌면 이전 포트의 브라우저 작업이 보이지 않을 수 있습니다.", flush=True)
     if args.no_watchdog:
+        lifecycle.goodbye_enabled = False   # 탭 닫힘(/goodbye)으로도 끄지 않는다
         print("자동 종료를 사용하지 않습니다. 끝나면 서버를 직접 종료하세요.", flush=True)
     else:
         Watchdog(server, lifecycle, args.timeout, args.grace, workflow.jobs).start()

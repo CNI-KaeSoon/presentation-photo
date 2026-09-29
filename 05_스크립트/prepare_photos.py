@@ -166,6 +166,8 @@ def from_plan(plan_path):
     for label, names in plan_groups.items():
         if not is_single_basename(label):
             raise ValueError(f"그룹명 거부 — 단일 폴더명이 아님: {label!r}")
+        if label.startswith("_"):
+            raise ValueError(f"그룹명 거부 — 밑줄(_)로 시작하는 이름은 보관용이다: {label!r}")
         if not isinstance(names, list):
             raise ValueError(f"그룹 사진 목록이 배열이 아님: {label!r}")
     if not src or not os.path.isdir(src):

@@ -82,7 +82,8 @@ def main() -> int:
     unplanned_total = 0
 
     for folder in sorted((p for p in out_root.iterdir() if p.is_dir()), key=lambda p: natural_key(p.name)):
-        if folder.name == here.name:
+        # `_` 로 시작하는 폴더(_이전작업_… 보관 폴더 등)는 그룹이 아니다 — 새 행사 시작이 옮겨 둔 것.
+        if folder.name == here.name or folder.name.startswith(("_", ".")):
             continue
         img_dir = folder / "img"
         if not img_dir.is_dir():

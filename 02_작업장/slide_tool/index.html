@@ -505,6 +505,17 @@ function collectBackup(){
   BACKUP_KEYS.forEach(k=>{const v=localStorage.getItem(k);if(v!=null)bak.data[k]=v;});
   return bak;
 }
+// 이 도구가 localStorage 에 쓰는 키 전부(구 버전 키 포함). 새 행사 시작이 브라우저 쪽 작업을 비울 때 쓴다.
+const TOOL_STORE_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES,LS_ORDER,LS_BACKUP_META,LS_DIRTY,
+  'slideCorners','slideStatus','slideRatios'];
+// 보정 작업이 실제로 저장된 흔적이 있는 키(보기 설정 LS_SHOW_EXCLUDED 는 뺀다) — 이 출처에 저장된 작업이 있는지 판정.
+const WORK_STORE_KEYS=TOOL_STORE_KEYS.filter(k=>k!==LS_SHOW_EXCLUDED);
+function hasStoredWork(){
+  try{return WORK_STORE_KEYS.some(k=>localStorage.getItem(k)!==null);}catch{return false;}
+}
+function clearToolStorage(){
+  TOOL_STORE_KEYS.forEach(k=>{try{localStorage.removeItem(k);}catch{}});
+}
 function applyBackup(parsed){
   const d=(parsed&&parsed.data)?parsed.data:parsed;
   let n=0;
@@ -567,9 +578,9 @@ function importBackup(files){
     try{
       const n=applyBackup(JSON.parse(rd.result));
       markBackedUp();   // 복원 직후 = 디스크의 백업 파일과 현재 상태가 일치 → 미백업분 0
-      alert('백업 복원 완료('+n+'개 항목). 새로고침합니다.');
-      location.reload();
-    }catch(e){alert('백업 파일을 읽을 수 없습니다: '+e.message);}
+      toast('백업 복원 완료('+n+'개 항목). 새로고침합니다.',4000);
+      setTimeout(()=>location.reload(),900);
+    }catch(e){toast('백업 파일을 읽을 수 없습니다: '+e.message,7000);}
   };
   rd.readAsText(f);
 }
@@ -580,6 +591,7 @@ function validateGroupName(raw){
   if(!value||value==='.'||value==='..'||value.includes('\0'))return {ok:false,reason:'비어 있지 않은 단일 그룹 이름을 입력하세요.'};
   if(value.includes('/')||value.includes('\\')||/^[A-Za-z]:/.test(value))return {ok:false,reason:'경로가 아닌 그룹 이름만 입력하세요.'};
   if(value.startsWith('.'))return {ok:false,reason:'점으로 시작하는 이름은 사용할 수 없습니다.'};
+  if(value.startsWith('_'))return {ok:false,reason:'밑줄(_)로 시작하는 이름은 보관용이라 사용할 수 없습니다.'};
   if(Array.from(value).some(ch=>{const code=ch.charCodeAt(0);return code<32||(code>=127&&code<=159);}))return {ok:false,reason:'제어 문자는 사용할 수 없습니다.'};
   if(/[?#%]/.test(value))return {ok:false,reason:'#, ?, % 문자는 사용할 수 없습니다.'};
   if(/[<>:"|*]/.test(value))return {ok:false,reason:'운영체제에서 금지된 문자는 사용할 수 없습니다.'};

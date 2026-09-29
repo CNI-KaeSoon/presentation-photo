@@ -4,6 +4,9 @@
   var TOKEN = null;
   var POLL_MS = 700;
   var COLLAPSE_KEY = 'wfPanelCollapsed_v1';
+  // 이 출처(주소·포트)가 이미 이 작업을 본 적이 있다는 표시 — 있으면 "저장된 보정값 없음" 안내 띠를 다시 띄우지 않는다.
+  var ORIGIN_SEEN_KEY = 'wfOriginSeen_v1';
+  var NEW_EVENT_TOAST_KEY = 'wfNewEventToast_v1';
   var state = {
     status: null,
     job: null,
@@ -23,6 +26,9 @@
     exportOrder: [],
     draggedGroup: null,
     disabled: false,
+    offline: false,
+    newEventRunning: false,
+    localBandChecked: false,
     dndBound: false
   };
   var ui = {};
@@ -221,6 +227,18 @@
       '.wfBanner.ok{background:#ecfdf3;color:var(--ok);border:1px solid #bbf7d0}',
       '.wfBanner.warn{background:#fffbeb;color:var(--warn);border:1px solid #fde68a}',
       '.wfBanner.error{background:#fef2f2;color:var(--bad);border:1px solid #fecaca}',
+      '.wfNoteActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px}',
+      '.wfNoteActions[hidden]{display:none}',
+      '.wfHeadActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.wfWhy{font-size:11px;color:var(--warn)}',
+      '.wfWhy:empty{display:none}',
+      '#wfLocalBand{margin:0 0 10px}',
+      '.wfNeList{margin:7px 0;padding-left:18px;font-size:13px}',
+      '.wfNeList li{margin:2px 0}',
+      '.wfNeOption{display:flex;align-items:flex-start;gap:7px;margin-top:10px;font-size:13px}',
+      '.wfNeOption input{margin-top:3px}',
+      '.wfNeError{color:var(--bad);font-size:12px;margin-top:8px;white-space:pre-wrap}',
+      '.wfNeError:empty{display:none}',
       '.wfProgress{display:none;margin-top:11px;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2)}',
       '.wfProgress.show{display:block}',
       '.wfProgressHead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}',
@@ -266,12 +284,29 @@
     ui.collapseBtn.addEventListener('click', function () {
       setCollapsed(!state.collapsed, true);
     });
+    ui.newEventBtn = el('button', {
+      type: 'button',
+      className: 'btn sm warn',
+      text: '새 행사 시작…',
+      title: '지금 작업을 보관 폴더로 옮기고 빈 작업장에서 새로 시작합니다 (삭제하지 않습니다)'
+    });
+    ui.newEventBtn.hidden = true;
+    ui.newEventBtn.addEventListener('click', confirmNewEvent);
     head.appendChild(headLeft);
-    head.appendChild(ui.collapseBtn);
+    head.appendChild(el('div', {className: 'wfHeadActions'}, [ui.newEventBtn, ui.collapseBtn]));
     ui.panel.appendChild(head);
 
-    ui.banner = el('div', {className: 'wfBanner', role: 'status'});
+    // 알림 띠 두 개: 배너(작업 결과·오류, 필요하면 버튼 하나)와 알림(상태에서 계산되는 안내 — 원본 변경 등).
+    var banner = buildNote('wfBanner');
+    ui.banner = banner.root;
+    ui.bannerText = banner.text;
+    ui.bannerActions = banner.actions;
     ui.panel.appendChild(ui.banner);
+    var notice = buildNote('wfBanner');
+    ui.notice = notice.root;
+    ui.noticeText = notice.text;
+    ui.noticeActions = notice.actions;
+    ui.panel.appendChild(ui.notice);
 
     ui.body = el('div', {className: 'wfBody'});
     ui.panel.appendChild(ui.body);
@@ -326,10 +361,12 @@
     ui.regroupBtn = el('button', {type: 'button', className: 'btn warn', text: '다시 나누기…'});
     ui.prepareBtn.addEventListener('click', function () { runPrepare(false); });
     ui.regroupBtn.addEventListener('click', confirmRegroup);
+    ui.prepareWhy = el('span', {className: 'wfWhy'});
     prepareWork.appendChild(el('div', {className: 'wfControls'}, [
       el('label', {}, [document.createTextNode('발표 간격(분)'), ui.gap]),
       ui.prepareBtn,
-      ui.regroupBtn
+      ui.regroupBtn,
+      ui.prepareWhy
     ]));
     ui.groupInfo = el('div', {className: 'wfCounts', text: '그룹 계획 없음'});
     ui.envInfo = el('div', {className: 'wfEnv', text: '환경 상태 확인 중'});
@@ -372,10 +409,12 @@
     ui.openOutBtn.addEventListener('click', function () { openFolder('out'); });
     exportWork.appendChild(ui.exportModes);
     exportWork.appendChild(ui.orderBox);
+    ui.exportWhy = el('span', {className: 'wfWhy'});
     exportWork.appendChild(el('div', {className: 'wfControls'}, [
       ui.exportBtn,
       el('label', {}, [ui.onlyDone, document.createTextNode('완료본만')]),
-      ui.openOutBtn
+      ui.openOutBtn,
+      ui.exportWhy
     ]));
     ui.resultInfo = el('div', {className: 'wfCounts', text: '현재 결과 PDF 0권'});
     exportWork.appendChild(ui.resultInfo);
@@ -438,8 +477,34 @@
     ui.body.appendChild(ui.progress);
 
     main.prepend(ui.panel);
+    buildLocalBand(main);
     buildModal();
+    buildNewEventModal();
     return true;
+  }
+
+  // 글 한 덩어리 + 버튼 줄로 된 알림 띠 뼈대.
+  function buildNote(className) {
+    var text = el('div');
+    var actions = el('div', {className: 'wfNoteActions'});
+    actions.hidden = true;
+    var root = el('div', {className: className, role: 'status'}, [text, actions]);
+    return {root: root, text: text, actions: actions};
+  }
+
+  function setNoteActions(box, actions) {
+    box.textContent = '';
+    (actions || []).forEach(function (action) {
+      var button = el('button', {
+        type: 'button',
+        className: 'btn sm' + (action.className ? ' ' + action.className : ''),
+        text: action.label
+      });
+      if (action.disabled) button.disabled = true;
+      button.addEventListener('click', action.onClick);
+      box.appendChild(button);
+    });
+    box.hidden = !(actions && actions.length);
   }
 
   function buildModal() {
@@ -594,6 +659,7 @@
       }
       state.status = payload;
       state.disabled = false;
+      state.offline = false;
       attachCorrectionEditor();
       ui.panel.hidden = false;
       renderPanel(payload);
@@ -616,8 +682,12 @@
         notifyState();
         return null;
       }
-      showBanner('서버 상태를 읽지 못했습니다 — 시작 파일로 도구를 다시 여세요.\n' + error.message, 'error');
       setControlsDisabled(true);
+      if (isNetworkError(error)) {
+        showServerDown();
+        return null;
+      }
+      showBanner('서버 상태를 읽지 못했습니다 — 시작 파일로 도구를 다시 여세요.\n' + (error.detail || error.message), 'error');
       return null;
     });
   }
@@ -665,6 +735,7 @@
     setText(ui.resultInfo, '현재 결과 PDF ' + Number(status.resultCount || 0) + '권');
     setText(ui.prepareBtn, status.worktree ? '그대로 준비' : '사진 준비 실행');
     ui.regroupBtn.hidden = !status.worktree;
+    ui.newEventBtn.hidden = !hasArchivableWork(status);
 
     if (!state.collapseReady) {
       var saved = null;
@@ -678,21 +749,107 @@
     }
     if (!state.manualStep) setExpandedStep(automaticStep(status), false);
     setControlsDisabled(running || state.disabled);
+    renderNotice(status);
+    maybeShowLocalBand(status);
     renderProgress();
   }
 
-  function setControlsDisabled(force) {
+  function photoTotal(status) {
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    return groups.reduce(function (sum, group) { return sum + Number(group.count || 0); }, 0);
+  }
+
+  // 새 행사 시작으로 보관할 것이 있는가 — 그룹·계획·목록·원본 중 하나라도.
+  function hasArchivableWork(status) {
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    return groups.length > 0 || !!status.worktree || !!status.dataJs || Number(status.srcCount || 0) > 0;
+  }
+
+  // 원본 폴더가 작업 계획과 어긋난 정도. 계획이 없으면 null.
+  function planDiff(status) {
+    var mismatch = status.planMismatch;
+    if (!status.worktree || !mismatch || typeof mismatch !== 'object') return null;
+    var missing = Number(mismatch.missing || 0);
+    var added = Number(mismatch.added || 0);
+    return missing + added > 0 ? {missing: missing, added: added} : null;
+  }
+
+  // 상태에서 계산되는 안내: 원본이 비었는데 작업장이 남았을 때 / 원본이 계획과 달라졌을 때.
+  function renderNotice(status) {
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    var hasWork = groups.length > 0 || !!status.worktree;
+    var running = isBusy() || state.uploading;
+    var diff = planDiff(status);
+    var text = '';
+    var actions = [];
+    if (hasWork && Number(status.srcCount || 0) === 0) {
+      text = '원본이 비어 있습니다 — 새 행사를 시작하려면 [새 행사 시작…]을 누르세요. ' +
+        '(이전 작업 그룹은 그대로 남아 있어 보정 화면에서 계속 편집할 수 있습니다.)';
+      actions = [{label: '새 행사 시작…', className: 'warn', disabled: running, onClick: confirmNewEvent}];
+    } else if (diff) {
+      var parts = [];
+      if (diff.added) parts.push('새 사진 ' + diff.added + '장');
+      if (diff.missing) parts.push('없어진 사진 ' + diff.missing + '장');
+      text = '원본이 바뀌었습니다(' + parts.join(', ') + '). ' +
+        '지금 작업을 보관하고 새로 시작하거나, 원본 전체로 그룹을 다시 나누세요.';
+      actions = [
+        {label: '새 행사로 시작', className: 'warn', disabled: running, onClick: confirmNewEvent},
+        {label: '다시 나누기', disabled: running, onClick: confirmRegroup}
+      ];
+    }
+    if (!text) {
+      ui.notice.className = 'wfBanner';
+      setText(ui.noticeText, '');
+      setNoteActions(ui.noticeActions, null);
+      return;
+    }
+    setText(ui.noticeText, text);
+    setNoteActions(ui.noticeActions, actions);
+    ui.notice.className = 'wfBanner show warn';
+  }
+
+  // 버튼이 꺼진 이유 한 줄. 켜져 있으면 ''.
+  function whyDisabled(kind, force) {
     var status = state.status || {};
-    var envOk = !!(status.env && status.env.ok);
     var hasPhotos = Number(status.srcCount || 0) > 0;
-    var prepared = !!status.dataJs;
+    var envOk = !!(status.env && status.env.ok);
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    if (state.offline) return '서버에 연결되지 않았습니다 — [다시 연결]을 누르세요.';
+    if (force) return state.uploading ? '사진을 올리는 중입니다 — 끝난 뒤 누르세요.' : '작업이 실행 중입니다 — 끝난 뒤 누르세요.';
+    if (kind === 'export') {
+      if (!status.dataJs || !groups.length) return '준비된 사진이 없습니다 — ② 사진 준비를 먼저 하세요.';
+      if (!hasPhotos) return '원본 사진이 없어 PDF를 만들 수 없습니다 — ① 에서 원본을 다시 넣으세요.';
+    } else if (!hasPhotos) {
+      return '원본 사진이 없습니다 — ① 에서 사진을 넣으세요.';
+    }
+    if (!envOk) return '환경이 준비되지 않았습니다 — 시작 파일(시작하기)을 다시 실행하세요.';
+    if (kind === 'prepare' && planDiff(status)) return '원본이 계획과 달라 그대로 준비할 수 없습니다 — 위 안내에서 고르세요.';
+    return '';
+  }
+
+  function setControlsDisabled(force) {
+    var prepareWhy = whyDisabled('prepare', !!force);
+    var regroupWhy = whyDisabled('regroup', !!force);
+    var exportWhy = whyDisabled('export', !!force);
     ui.openSrcBtn.disabled = !!force;
     ui.drop.setAttribute('aria-disabled', force ? 'true' : 'false');
     ui.fileInput.disabled = !!force;
     ui.gap.disabled = !!force;
-    ui.prepareBtn.disabled = !!force || !hasPhotos || !envOk;
-    ui.regroupBtn.disabled = !!force || !hasPhotos || !envOk;
-    ui.exportBtn.disabled = !!force || !prepared || !envOk;
+    ui.prepareBtn.disabled = !!prepareWhy;
+    ui.regroupBtn.disabled = !!regroupWhy;
+    ui.exportBtn.disabled = !!exportWhy;
+    ui.newEventBtn.disabled = !!force;
+    // 사진 준비 줄: 두 버튼 이유가 같으면 한 번만, 다르면 버튼 이름을 붙여 둘 다 적는다.
+    var prepareLine = '';
+    if (prepareWhy && regroupWhy === prepareWhy) prepareLine = prepareWhy;
+    else {
+      var pieces = [];
+      if (prepareWhy) pieces.push(ui.prepareBtn.textContent + ': ' + prepareWhy);
+      if (regroupWhy && !ui.regroupBtn.hidden) pieces.push('다시 나누기: ' + regroupWhy);
+      prepareLine = pieces.join(' · ');
+    }
+    setText(ui.prepareWhy, prepareLine);
+    setText(ui.exportWhy, exportWhy);
     ui.onlyDone.disabled = !!force;
     Object.keys(ui.exportModeRadios || {}).forEach(function (mode) {
       ui.exportModeRadios[mode].disabled = !!force;
@@ -910,7 +1067,7 @@
     }).catch(function (error) {
       state.job = null;
       setControlsDisabled(false);
-      showBanner(error.detail || error.message, 'error');
+      showApiError(error);
       renderProgress();
     });
   }
@@ -954,6 +1111,10 @@
       state.job = null;
       renderProgress();
       setControlsDisabled(true);
+      if (isNetworkError(error)) {
+        showServerDown();
+        return;
+      }
       showBanner('서버에서 작업 상태를 읽지 못했습니다. 시작 파일로 도구를 다시 여세요.\n' + error.message, 'error');
     });
   }
@@ -963,6 +1124,7 @@
     state.pollTimer = null;
     setControlsDisabled(false);
     if (job.state === 'done' && job.kind === 'prepare') {
+      markOriginSeen();
       showBanner('사진 준비가 끝났습니다. 새 목록을 불러옵니다.', 'ok');
       setTimeout(function () { location.reload(); }, 250);
       return;
@@ -1016,16 +1178,14 @@
     }).catch(function (error) {
       state.cancelling = false;
       ui.cancelBtn.disabled = false;
-      showBanner(error.detail || error.message, 'error');
+      showApiError(error);
       watchJob(state.activeKind);
     });
   }
 
   function openFolder(target) {
     if (state.disabled || isBusy() || state.uploading) return;
-    api('/api/open-folder', {method: 'POST', json: {target: target}}).catch(function (error) {
-      showBanner(error.detail || error.message, 'error');
-    });
+    api('/api/open-folder', {method: 'POST', json: {target: target}}).catch(showApiError);
   }
 
   function renderProgress() {
@@ -1059,22 +1219,46 @@
     setText(ui.logAll, state.logs.join('\n'));
   }
 
-  function showBanner(message, level) {
+  function showBanner(message, level, actions) {
     if (!ui.banner) return;
-    setText(ui.banner, message);
+    setText(ui.bannerText, message);
+    setNoteActions(ui.bannerActions, actions);
     ui.banner.className = 'wfBanner show ' + (level || 'info');
   }
 
   function clearBanner() {
     if (!ui.banner) return;
-    setText(ui.banner, '');
+    setText(ui.bannerText, '');
+    setNoteActions(ui.bannerActions, null);
     ui.banner.className = 'wfBanner';
   }
 
-  function init() {
-    injectStyle();
-    if (!buildPanel()) return;
-    fetchToken().then(function () {
+  // 서버 연결 자체가 끊긴 경우(fetch 가 응답 없이 실패)와 서버가 거절한 경우를 구분한다.
+  function showApiError(error) {
+    if (isNetworkError(error)) showServerDown();
+    else showBanner((error && (error.detail || error.message)) || '요청에 실패했습니다.', 'error');
+  }
+
+  function isNetworkError(error) {
+    return !!error && error.status === undefined && error instanceof TypeError;
+  }
+
+  function showServerDown() {
+    state.offline = true;
+    setControlsDisabled(true);
+    showBanner('도구 서버가 꺼졌습니다. 시작 파일(시작하기)을 다시 실행하세요.', 'error', [
+      {label: '다시 연결', className: 'on', onClick: reconnect}
+    ]);
+  }
+
+  function reconnect() {
+    clearBanner();
+    TOKEN = null;
+    return connect();
+  }
+
+  function connect() {
+    return fetchToken().then(function () {
       return refreshStatus();
     }).then(function (status) {
       if (!status) return;
@@ -1090,12 +1274,264 @@
       }
       ui.panel.hidden = false;
       setControlsDisabled(true);
+      if (isNetworkError(error)) {
+        showServerDown();
+        return;
+      }
       showBanner(
-        '보안 확인 실패 — 페이지를 http://localhost:8770/slide_tool/ 주소로 여세요.\n' +
+        '보안 확인 실패 — 이 서버는 localhost 주소로 연 페이지에서만 쓸 수 있습니다. ' +
+        'http://localhost:' + (location.port || '포트') + '/slide_tool/ 주소로 여세요.\n' +
+        '현재 주소: ' + location.origin + '\n' +
         (error.detail || error.message),
-        'error'
+        'error',
+        [{label: '다시 연결', onClick: reconnect}]
       );
     });
+  }
+
+  // ===================== 새 행사 시작 =====================
+  function readJsonKey(key) {
+    try {
+      var raw = localStorage.getItem(key);
+      var value = raw ? JSON.parse(raw) : null;
+      return value && typeof value === 'object' ? value : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  // 이 브라우저에 저장된 보정값 요약(모서리·완료/제외·색보정 장수).
+  function storedWorkSummary() {
+    var corners = readJsonKey('slideCorners_v1');
+    var status = readJsonKey('slideStatus_v1');
+    var color = readJsonKey('slideColor_v1');
+    var counts = {
+      corners: corners ? Object.keys(corners).length : 0,
+      status: status ? Object.keys(status).length : 0,
+      color: color ? Object.keys(color).length : 0
+    };
+    counts.any = counts.corners + counts.status + counts.color > 0;
+    return counts;
+  }
+
+  function markOriginSeen() {
+    try { localStorage.setItem(ORIGIN_SEEN_KEY, '1'); } catch (_error) { /* 저장 못 해도 안내만 다시 뜰 뿐 */ }
+  }
+
+  function originSeen() {
+    try { return localStorage.getItem(ORIGIN_SEEN_KEY) === '1'; } catch (_error) { return false; }
+  }
+
+  function buildNewEventModal() {
+    ui.neBack = el('div', {className: 'wfModalBack', role: 'dialog', 'aria-modal': 'true'});
+    var modal = el('div', {className: 'wfModal'});
+    modal.appendChild(el('h2', {text: '새 행사 시작'}));
+    modal.appendChild(el('p', {text: '지금 작업을 통째로 보관하고 빈 작업장에서 시작합니다. 삭제하지 않고 작업장 안의 보관 폴더로 옮깁니다.'}));
+    ui.neList = el('ul', {className: 'wfNeList'});
+    modal.appendChild(ui.neList);
+    ui.neOriginals = el('input', {type: 'checkbox'});
+    ui.neOriginalsText = el('span', {text: '원본 사진도 함께 보관'});
+    modal.appendChild(el('label', {className: 'wfNeOption'}, [ui.neOriginals, ui.neOriginalsText]));
+    modal.appendChild(el('p', {
+      className: 'wfRowInfo',
+      text: '체크하지 않으면 원본 폴더의 사진은 그대로 남아, 다음 행사 사진과 섞일 수 있습니다.'
+    }));
+    ui.neError = el('div', {className: 'wfNeError', role: 'alert'});
+    modal.appendChild(ui.neError);
+    ui.neCancel = el('button', {type: 'button', className: 'btn', text: '취소'});
+    ui.neOk = el('button', {type: 'button', className: 'btn on', text: '백업 받고 시작'});
+    ui.neCancel.addEventListener('click', closeNewEvent);
+    ui.neOk.addEventListener('click', runNewEvent);
+    modal.appendChild(el('div', {className: 'wfModalActions'}, [ui.neCancel, ui.neOk]));
+    ui.neBack.appendChild(modal);
+    ui.neBack.addEventListener('click', function (event) {
+      if (event.target === ui.neBack && !state.newEventRunning) closeNewEvent();
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && ui.neBack.classList.contains('show') && !state.newEventRunning) closeNewEvent();
+    });
+    document.body.appendChild(ui.neBack);
+  }
+
+  function confirmNewEvent() {
+    if (state.disabled || isBusy() || state.uploading || !state.status) return;
+    var status = state.status;
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    var stored = storedWorkSummary();
+    var srcCount = Number(status.srcCount || 0);
+    ui.neList.textContent = '';
+    ui.neList.appendChild(el('li', {
+      text: '작업 그룹 ' + groups.length + '개 · 작업용 사진 ' + photoTotal(status) + '장 (그룹 폴더·그룹 계획·목록)'
+    }));
+    ui.neList.appendChild(el('li', {
+      text: stored.any
+        ? '저장된 보정값 — 모서리 ' + stored.corners + '장 · 완료/제외 ' + stored.status + '장 · 색보정 ' + stored.color +
+          '장 (백업 파일로 저장한 뒤 이 브라우저에서 지웁니다)'
+        : '저장된 보정값 — 없음'
+    }));
+    ui.neList.appendChild(el('li', {text: '결과 PDF(결과물 폴더)는 그대로 둡니다.'}));
+    setText(ui.neOriginalsText, '원본 사진도 함께 보관 (원본 폴더의 ' + srcCount + '장을 보관 폴더로 옮김)');
+    ui.neOriginals.checked = false;
+    ui.neOriginals.disabled = srcCount === 0;
+    setText(ui.neError, '');
+    ui.neOk.disabled = false;
+    ui.neCancel.disabled = false;
+    setText(ui.neOk, '백업 받고 시작');
+    ui.neBack.classList.add('show');
+    ui.neOk.focus();
+  }
+
+  function closeNewEvent() {
+    ui.neBack.classList.remove('show');
+  }
+
+  // 이 도구가 쓰는 localStorage 키를 모두 지우고(index.html 의 목록 + 이 패널의 접기 상태) 새로고침한다.
+  function clearToolStorageAndReload(toastMessage) {
+    try {
+      if (typeof clearToolStorage === 'function') clearToolStorage();
+      localStorage.removeItem(COLLAPSE_KEY);
+      localStorage.removeItem(ORIGIN_SEEN_KEY);
+    } catch (_error) { /* 접근이 막혀 있으면 지울 것도 없다 */ }
+    markOriginSeen();
+    try { sessionStorage.setItem(NEW_EVENT_TOAST_KEY, toastMessage); } catch (_error) {}
+    location.reload();
+  }
+
+  function runNewEvent() {
+    if (state.newEventRunning) return;
+    if (typeof collectBackup !== 'function') {
+      setText(ui.neError, '현재 보정값을 수집하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도하세요.');
+      return;
+    }
+    var backup;
+    try {
+      backup = collectBackup();
+    } catch (error) {
+      setText(ui.neError, '현재 보정값을 읽지 못했습니다.\n' + error.message);
+      return;
+    }
+    state.newEventRunning = true;
+    ui.neOk.disabled = true;
+    ui.neCancel.disabled = true;
+    setText(ui.neOk, '보관하는 중…');
+    setText(ui.neError, '');
+    api('/api/new-event', {
+      method: 'POST',
+      json: {backup: backup, moveOriginals: !!ui.neOriginals.checked}
+    }).then(function (payload) {
+      clearToolStorageAndReload('이전 작업을 ' + payload.archive + ' 에 보관했습니다');
+    }).catch(function (error) {
+      state.newEventRunning = false;
+      ui.neOk.disabled = false;
+      ui.neCancel.disabled = false;
+      setText(ui.neOk, '백업 받고 시작');
+      setText(ui.neError, isNetworkError(error)
+        ? '도구 서버가 꺼졌습니다. 시작 파일(시작하기)을 다시 실행하세요.'
+        : ((error && (error.detail || error.message)) || '요청에 실패했습니다.'));
+    });
+  }
+
+  function showPendingToast() {
+    var message = null;
+    try {
+      message = sessionStorage.getItem(NEW_EVENT_TOAST_KEY);
+      if (message) sessionStorage.removeItem(NEW_EVENT_TOAST_KEY);
+    } catch (_error) { message = null; }
+    if (!message) return;
+    if (typeof toast === 'function') toast(message, 9000);
+    showBanner(message, 'ok');
+  }
+
+  // ===================== 이 주소에 저장된 작업 없음 안내 =====================
+  function buildLocalBand(main) {
+    var note = buildNote('wfBanner warn');
+    note.root.id = 'wfLocalBand';
+    ui.localBand = note.root;
+    ui.localBandText = note.text;
+    ui.localBandActions = note.actions;
+    main.prepend(ui.localBand);
+  }
+
+  function formatBackupTime(seconds) {
+    var date = new Date(Number(seconds) * 1000);
+    if (isNaN(date.getTime())) return '';
+    function two(n) { return (n < 10 ? '0' : '') + n; }
+    return two(date.getMonth() + 1) + '-' + two(date.getDate()) + ' ' + two(date.getHours()) + ':' + two(date.getMinutes());
+  }
+
+  function hideLocalBand() {
+    ui.localBand.className = 'wfBanner warn';
+    setText(ui.localBandText, '');
+    setNoteActions(ui.localBandActions, null);
+  }
+
+  function dismissLocalBand() {
+    markOriginSeen();
+    hideLocalBand();
+  }
+
+  // 작업장에 그룹·사진이 있는데 이 출처에는 도구 저장값이 하나도 없고, 서버에 백업 파일이 있을 때만 띄운다.
+  // (포트·주소가 바뀌면 브라우저가 다른 사이트로 봐서 저장값이 비어 보인다.)
+  function maybeShowLocalBand(status) {
+    if (state.localBandChecked || state.disabled) return;
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    if (!groups.length || photoTotal(status) === 0) return;
+    if (typeof hasStoredWork !== 'function') return;
+    state.localBandChecked = true;
+    if (hasStoredWork() || originSeen()) return;
+    api('/api/backups').then(function (payload) {
+      var backups = payload && Array.isArray(payload.backups) ? payload.backups : [];
+      if (!backups.length) return;
+      var latest = backups[0];
+      var when = formatBackupTime(latest.modified);
+      setText(ui.localBandText,
+        '이 주소(' + location.host + ')에는 저장된 보정값이 없습니다. 다른 주소(포트)에서 작업했다면 ' +
+        '최근 백업' + (when ? '(' + when + ')' : '') + '을 불러올 수 있습니다.');
+      setNoteActions(ui.localBandActions, [
+        {label: '최근 백업 불러오기', className: 'on', onClick: function () { loadLatestBackup(latest.name); }},
+        {label: '닫기', onClick: dismissLocalBand}
+      ]);
+      ui.localBand.className = 'wfBanner warn show';
+    }).catch(function () { /* 안내 띠는 부가 기능 — 목록을 못 받으면 조용히 넘어간다 */ });
+  }
+
+  function notify(message, ms) {
+    if (typeof toast === 'function') toast(message, ms);
+    else showBanner(message, 'info');
+  }
+
+  function loadLatestBackup(name) {
+    if (state.disabled || isBusy() || state.uploading) return;
+    setNoteActions(ui.localBandActions, null);
+    api('/api/backup?name=' + encodeURIComponent(name)).then(function (payload) {
+      if (typeof applyBackup !== 'function') throw new Error('백업 복원 기능을 찾지 못했습니다.');
+      var count = applyBackup(payload.backup);
+      if (!count) {
+        notify('백업에 복원할 항목이 없습니다.', 6000);
+        return;
+      }
+      if (typeof markBackedUp === 'function') markBackedUp();
+      markOriginSeen();
+      notify('백업을 불러왔습니다 (' + count + '개 항목). 새로고침합니다.', 4000);
+      setTimeout(function () { location.reload(); }, 900);
+    }).catch(function (error) {
+      notify('백업을 불러오지 못했습니다: ' + ((error && (error.detail || error.message)) || error), 7000);
+      maybeRestoreBandButtons(name);
+    });
+  }
+
+  function maybeRestoreBandButtons(name) {
+    setNoteActions(ui.localBandActions, [
+      {label: '최근 백업 불러오기', className: 'on', onClick: function () { loadLatestBackup(name); }},
+      {label: '닫기', onClick: dismissLocalBand}
+    ]);
+  }
+
+  function init() {
+    injectStyle();
+    if (!buildPanel()) return;
+    showPendingToast();
+    connect();
   }
 
   window.__slideWorkflow = {

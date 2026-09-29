@@ -10,6 +10,7 @@ import io
 import importlib.util
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -2006,9 +2007,399 @@ def run_auto_detect() -> list[bool]:
     return results
 
 
+def token_get(base: str, path: str, token: Optional[str]) -> tuple[int, dict[str, object]]:
+    headers = {"X-Workflow-Token": token} if token is not None else {}
+    status, _, raw = http_request("GET", base + path, headers=headers)
+    return status, decode_json(raw)
+
+
+def work_children(pkg: Path) -> list[str]:
+    return sorted(path.name for path in (pkg / "02_작업장").iterdir())
+
+
+def make_event_pkg(temp: Path) -> tuple[Path, list[str]]:
+    """그룹 2개 + 계획 + data.js + 원본 사진 2장이 있는 패키지."""
+    pkg = make_pkg(temp)
+    work = pkg / "02_작업장"
+    names = ["01_가나", "02_다라"]
+    plan_groups: dict[str, list[str]] = {}
+    for index, name in enumerate(names):
+        image_dir = work / name / "img"
+        image_dir.mkdir(parents=True)
+        photos = [f"P{index}_{n}.jpg" for n in (1, 2)]
+        for photo in photos:
+            Image.new("RGB", (60, 40), (40 + index * 60, 100, 100)).save(image_dir / photo)
+        plan_groups[name] = photos
+    plan = {
+        "_type": "slide_tool_worktree",
+        "_version": 2,
+        "root": ".",
+        "source": "../01_원본사진",
+        "groups": plan_groups,
+    }
+    (work / "worktree.json").write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(work / "slide_tool" / "gen_manifest.py")],
+        cwd=pkg, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        encoding="utf-8", errors="replace", check=False,
+    )
+    assert result.returncode == 0, result.stdout
+    (pkg / "01_원본사진" / "여기에_사진을_넣으세요.txt").write_text("안내", encoding="utf-8")
+    return pkg, names
+
+
+def run_new_event() -> list[bool]:
+    results: list[bool] = []
+    processes: list[subprocess.Popen[str]] = []
+    archive_re = re.compile(r"^_이전작업_[0-9]{6}_[0-9]{4}(_[0-9]+)?$")
+    try:
+        with tempfile.TemporaryDirectory(prefix="workflow_event_") as temp_dir:
+            temp = Path(temp_dir)
+            pkg, names = make_event_pkg(temp)
+            work = pkg / "02_작업장"
+            out = pkg / "03_결과물"
+            (out / "기존.pdf").write_bytes(b"%PDF-1.4 keep")
+            outside = temp / "outside"
+            (outside / "img").mkdir(parents=True)
+            Image.new("RGB", (40, 30), (1, 2, 3)).save(outside / "img" / "o.jpg")
+            (work / "link_group").symlink_to(outside, target_is_directory=True)
+            _, base, token = start_server(pkg, processes)
+            first_archive: list[str] = []
+
+            def e1() -> None:
+                status, payload = token_get(base, "/api/status", token)
+                assert status == 200, payload
+                assert [g["name"] for g in payload["groups"]] == names + ["link_group"], payload
+                backup = make_backup([f"../{names[0]}/img/P0_1.jpg"])
+                code, _, res = json_post(base, "/api/new-event", token, {"backup": backup})
+                assert code == 200 and res.get("ok") is True, (code, res)
+                archive = str(res["archive"])
+                assert archive_re.match(archive), archive
+                first_archive.append(archive)
+                moved = res["moved"]
+                assert isinstance(moved, dict), res
+                assert moved["groups"] == 2 and moved["photos"] == 4, moved
+                assert moved["worktree"] is True and moved["dataJs"] is True and moved["originals"] == 0, moved
+                folder = work / archive
+                for index, name in enumerate(names):
+                    assert (folder / name / "img" / f"P{index}_1.jpg").is_file(), name
+                assert (folder / "worktree.json").is_file() and (folder / "data.js").is_file()
+                assert (folder / "백업.json").is_file()
+                saved = res["backup"]
+                assert isinstance(saved, str) and saved.startswith("백업/slide_tool_backup_"), res
+                assert (out / saved).is_file()
+                # 작업장·도구·결과물·원본 상태
+                assert not (work / "worktree.json").exists()
+                assert not (work / "slide_tool" / "data.js").exists()
+                assert (work / "slide_tool" / "index.html").is_file()
+                assert (work / "slide_tool" / "gen_manifest.py").is_file()
+                for name in names:
+                    assert not (work / name).exists(), name
+                assert (out / "기존.pdf").read_bytes() == b"%PDF-1.4 keep"
+                assert len(list((pkg / "01_원본사진").glob("IMG_*.jpg"))) == 2
+                # 심볼릭 링크 그룹은 옮기지 않고 바깥 폴더도 그대로다
+                assert (work / "link_group").is_symlink() and (outside / "img" / "o.jpg").is_file()
+
+            results.append(report("N1 새 행사 시작: 이동 결과·보관 폴더 구성·결과물 보존·링크 제외", e1))
+
+            def e2() -> None:
+                status, payload = token_get(base, "/api/status", token)
+                assert status == 200, payload
+                # 보관 폴더(안에 img 가 있는 하위 그룹이 들어 있어도)와 링크 그룹 외에는 그룹이 없다
+                assert [g["name"] for g in payload["groups"]] == ["link_group"], payload["groups"]
+                assert payload["worktree"] is False and payload["planMismatch"] is None, payload
+                assert payload["dataJs"] is False, payload
+
+            results.append(report("N2 새 행사 뒤 status: 보관 폴더는 그룹이 아님·계획 없음", e2))
+
+            def e3() -> None:
+                # 보관 폴더에 img 가 바로 들어 있어도 그룹으로 취급하지 않는다(gen_manifest·내보내기·자동 찾기·이름 변경).
+                decoy = work / "_이전작업_수동" / "img"
+                decoy.mkdir(parents=True)
+                Image.new("RGB", (60, 40), (9, 9, 9)).save(decoy / "d.jpg")
+                real = work / "01_진짜" / "img"
+                real.mkdir(parents=True)
+                Image.new("RGB", (60, 40), (99, 9, 9)).save(real / "r.jpg")
+                run = subprocess.run(
+                    [sys.executable, str(work / "slide_tool" / "gen_manifest.py")],
+                    cwd=pkg, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    encoding="utf-8", errors="replace", check=False,
+                )
+                assert run.returncode == 0, run.stdout
+                data = (work / "slide_tool" / "data.js").read_text(encoding="utf-8")
+                assert "01_진짜" in data and "_이전작업_" not in data, data
+                status, payload = token_get(base, "/api/status", token)
+                assert "_이전작업_수동" not in [g["name"] for g in payload["groups"]], payload["groups"]
+                code, _, res = json_post(
+                    base, "/api/auto-detect", token, {"keys": ["../_이전작업_수동/img/d.jpg"]}
+                )
+                assert code == 404 and res.get("error") == "image_not_found", (code, res)
+                code, _, res = json_post(
+                    base, "/api/export-pdf", token,
+                    {"backup": make_backup([]), "mode": "ordered", "order": ["_이전작업_수동", "01_진짜"]},
+                )
+                assert code == 400 and res.get("error") == "bad_order", (code, res)
+                code, _, res = json_post(
+                    base, "/api/rename-group", token, {"from": "01_진짜", "to": "_보관"}
+                )
+                assert code == 400 and res.get("error") == "bad_group_name", (code, res)
+                job = export_job(base, token, make_backup([f"../01_진짜/img/r.jpg"]), 90)
+                names_out = sorted(path.name for path in out.glob("*.pdf"))
+                assert "01_진짜.pdf" in names_out and not any(n.startswith("_") for n in names_out), names_out
+                assert "_이전작업_수동" not in job_log(job), job_log(job)
+
+            results.append(report("N3 `_` 폴더는 그룹 아님: 목록·내보내기·자동 찾기·이름 변경", e3))
+
+            def e4() -> None:
+                plan = temp / "bad_plan"
+                (plan / "out").mkdir(parents=True)
+                (plan / "src").mkdir()
+                Image.new("RGB", (30, 20), (0, 0, 0)).save(plan / "src" / "a.jpg")
+                (plan / "worktree.json").write_text(
+                    json.dumps({
+                        "_type": "slide_tool_worktree", "_version": 2, "root": "out", "source": "src",
+                        "groups": {"_숨김": ["a.jpg"]},
+                    }, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                run = subprocess.run(
+                    [sys.executable, str(SCRIPT_DIR / "prepare_photos.py"), "--plan", str(plan / "worktree.json")],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                    errors="replace", check=False,
+                )
+                assert run.returncode != 0 and "밑줄" in run.stdout, run.stdout
+                assert not (plan / "out" / "_숨김").exists()
+
+            results.append(report("N4 prepare_photos 는 `_` 시작 그룹명을 거부", e4))
+
+        with tempfile.TemporaryDirectory(prefix="workflow_event2_") as temp_dir:
+            temp = Path(temp_dir)
+            pkg, names = make_event_pkg(temp)
+            work = pkg / "02_작업장"
+            src = pkg / "01_원본사진"
+            Image.new("RGB", (30, 20), (5, 5, 5)).save(src / "IMG_1.jpg")
+            (src / "발표A").mkdir()
+            Image.new("RGB", (30, 20), (6, 6, 6)).save(src / "발표A" / "IMG_3.jpg")
+            (src / ".숨김").write_text("keep", encoding="utf-8")
+            _, base, token = start_server(pkg, processes)
+
+            def e5() -> None:
+                code, _, res = json_post(
+                    base, "/api/new-event", token, {"moveOriginals": True}
+                )
+                assert code == 200, (code, res)
+                archive = work / str(res["archive"])
+                moved = res["moved"]
+                assert isinstance(moved, dict) and moved["originals"] == 3, moved
+                assert res["backup"] is None and not (archive / "백업.json").exists(), res
+                assert (archive / "01_원본사진" / "IMG_1.jpg").is_file()
+                assert (archive / "01_원본사진" / "IMG_2.jpg").is_file()
+                assert (archive / "01_원본사진" / "발표A" / "IMG_3.jpg").is_file()
+                left = sorted(path.name for path in src.iterdir())
+                assert left == [".숨김", "여기에_사진을_넣으세요.txt"], left
+                status, payload = token_get(base, "/api/status", token)
+                assert payload["srcCount"] == 0 and payload["groups"] == [], payload
+
+            results.append(report("N5 moveOriginals: 원본 사진만 보관 폴더로(안내문·숨김 파일 제외)", e5))
+
+            def e6() -> None:
+                code, _, res = json_post(base, "/api/new-event", token, {})
+                assert code == 409 and res.get("error") == "nothing_to_archive", (code, res)
+                first = sorted(p.name for p in work.iterdir() if p.name.startswith("_이전작업_"))
+                # 같은 분 안에 다시 시작해도 이전 보관 폴더를 덮어쓰지 않고 접미사로 구분한다.
+                (work / "03_새" / "img").mkdir(parents=True)
+                Image.new("RGB", (20, 20), (7, 7, 7)).save(work / "03_새" / "img" / "n.jpg")
+                code, _, res = json_post(base, "/api/new-event", token, {})
+                assert code == 200, (code, res)
+                after = sorted(p.name for p in work.iterdir() if p.name.startswith("_이전작업_"))
+                assert len(after) == len(first) + 1 and set(first) < set(after), (first, after)
+                assert (work / str(res["archive"]) / "03_새" / "img" / "n.jpg").is_file()
+                for bad in ({"moveOriginals": "yes"}, {"backup": [1]}):
+                    code, _, res = json_post(base, "/api/new-event", token, bad)
+                    assert code == 400, (bad, code, res)
+
+            results.append(report("N6 보관할 것 없음 409·이름 충돌 접미사·잘못된 본문 400", e6))
+
+            def e7() -> None:
+                url = base + "/api/new-event"
+                body = b"{}"
+                good = {"Origin": base, "X-Workflow-Token": token, "Content-Type": "application/json"}
+                no_token = {k: v for k, v in good.items() if k != "X-Workflow-Token"}
+                status, _, _ = http_request("POST", url, headers=no_token, body=body)
+                assert status == 401, status
+                status, _, _ = http_request("POST", url, headers={**good, "X-Workflow-Token": "x"}, body=body)
+                assert status == 403, status
+                status, _, _ = http_request("POST", url, headers={**good, "Origin": "http://evil.example"}, body=body)
+                assert status == 403, status
+                status, _, _ = http_request("POST", url, headers=good, body=body, host_override="evil.example")
+                assert status == 403, status
+
+            results.append(report("N7 새 행사: 토큰 없음·오답·Origin·Host 거부", e7))
+
+        with tempfile.TemporaryDirectory(prefix="workflow_event3_") as temp_dir:
+            temp = Path(temp_dir)
+            pkg, names = make_event_pkg(temp)
+            work = pkg / "02_작업장"
+            _, base, token = start_server(pkg, processes)
+
+            def e8() -> None:
+                code, _, first = json_post(
+                    base, "/api/prepare", token, {"regroup": True, "gapMinutes": 20}
+                )
+                assert code == 202, first
+                code, _, res = json_post(base, "/api/new-event", token, {})
+                try:
+                    assert code == 409 and res.get("error") == "busy", (code, res)
+                finally:
+                    wait_job(base, token, 90)
+                assert (work / "worktree.json").is_file(), "실행 중 거부인데 작업장이 바뀌었습니다."
+
+            results.append(report("N8 잡 실행 중 새 행사는 409 busy", e8))
+
+        with tempfile.TemporaryDirectory(prefix="workflow_event4_") as temp_dir:
+            temp = Path(temp_dir)
+            pkg, names = make_event_pkg(temp)
+            work = pkg / "02_작업장"
+            src = pkg / "01_원본사진"
+            _, base, token = start_server(pkg, processes)
+
+            def diff() -> object:
+                status, payload = token_get(base, "/api/status", token)
+                assert status == 200, payload
+                return payload["planMismatch"]
+
+            def m1() -> None:
+                # 계획: P0_1 P0_2 P1_1 P1_2 / 원본: IMG_1 IMG_2 → 4 없어짐, 2 새로 옴
+                assert diff() == {"missing": 4, "added": 2}, diff()
+                for index in range(2):
+                    for n in (1, 2):
+                        Image.new("RGB", (30, 20), (index, n, 0)).save(src / f"P{index}_{n}.jpg")
+                assert diff() == {"missing": 0, "added": 2}, diff()
+                for name in ("IMG_1.jpg", "IMG_2.jpg"):
+                    (src / name).unlink()
+                assert diff() == {"missing": 0, "added": 0}, diff()
+                (src / "P0_2.jpg").unlink()
+                assert diff() == {"missing": 1, "added": 0}, diff()
+                (src / ".가려짐.jpg").write_bytes(b"x")
+                (src / "NEW_9.png").write_bytes(b"x")
+                assert diff() == {"missing": 1, "added": 1}, diff()
+                for path in list(src.glob("*.jpg")) + list(src.glob("*.png")):
+                    path.unlink()
+                assert diff() == {"missing": 4, "added": 0}, diff()
+
+            results.append(report("M1 planMismatch: 새 사진·없어진 사진·일치·원본 0장·숨김 파일 무시", m1))
+
+            def m2() -> None:
+                (work / "worktree.json").unlink()
+                assert diff() is None, diff()
+                (work / "worktree.json").write_text("{깨짐", encoding="utf-8")
+                assert diff() is None, diff()
+
+            results.append(report("M2 계획 파일 없음/손상이면 planMismatch null", m2))
+
+        with tempfile.TemporaryDirectory(prefix="workflow_backups_") as temp_dir:
+            temp = Path(temp_dir)
+            pkg = make_pkg(temp)
+            backup_dir = pkg / "03_결과물" / "백업"
+            _, base, token = start_server(pkg, processes)
+
+            def b1() -> None:
+                status, payload = token_get(base, "/api/backups", token)
+                assert status == 200 and payload["backups"] == [], payload
+                backup_dir.mkdir(parents=True)
+                old = backup_dir / "slide_tool_backup_20260101-090000.json"
+                new = backup_dir / "slide_tool_backup_20260102-090000.json"
+                old.write_text(json.dumps(make_backup(["../a/img/x.jpg"])), encoding="utf-8")
+                new.write_text(json.dumps(make_backup(["../b/img/y.jpg"])), encoding="utf-8")
+                os.utime(old, (1_767_000_000, 1_767_000_000))
+                os.utime(new, (1_768_000_000, 1_768_000_000))
+                (backup_dir / "메모.json").write_text("{}", encoding="utf-8")
+                (backup_dir / "slide_tool_backup_bad.json").write_text("{}", encoding="utf-8")
+                secret = temp / "secret.json"
+                secret.write_text(json.dumps(make_backup(["../s/img/s.jpg"])), encoding="utf-8")
+                (backup_dir / "slide_tool_backup_20260103-090000.json").symlink_to(secret)
+                status, payload = token_get(base, "/api/backups", token)
+                assert status == 200, payload
+                names = [row["name"] for row in payload["backups"]]
+                assert names == [new.name, old.name], names
+                assert all(isinstance(row["size"], int) and row["modified"] > 0 for row in payload["backups"])
+                status, payload = token_get(base, "/api/backup?name=" + urllib.parse.quote(new.name), token)
+                assert status == 200 and payload["name"] == new.name, payload
+                assert payload["backup"]["_type"] == "slide_tool_backup", payload
+                assert "../b/img/y.jpg" in payload["backup"]["data"]["slideCorners_v1"]
+
+            results.append(report("B1 백업 목록(최신 순·형식 필터·링크 제외)과 내용 조회", b1))
+
+            def b2() -> None:
+                for name in (
+                    "../slide_tool_backup_20260101-090000.json",
+                    "..%2f..%2f00_시작%2fserve_tool.py",
+                    "/etc/passwd",
+                    "slide_tool_backup_20260101-090000.json/../x",
+                    "slide_tool_backup_20260101-090000.json%00.txt",
+                    "메모.json",
+                    "",
+                ):
+                    status, payload = token_get(
+                        base, "/api/backup?name=" + urllib.parse.quote(name, safe="%"), token
+                    )
+                    assert status == 400 and payload.get("error") == "bad_backup_name", (name, status, payload)
+                status, payload = token_get(base, "/api/backup", token)
+                assert status == 400, (status, payload)
+                status, payload = token_get(
+                    base, "/api/backup?name=slide_tool_backup_20300101-000000.json", token
+                )
+                assert status == 404 and payload.get("error") == "backup_not_found", (status, payload)
+                # 이름은 맞지만 심볼릭 링크(작업 폴더 밖 파일)는 읽지 않는다
+                status, payload = token_get(
+                    base, "/api/backup?name=slide_tool_backup_20260103-090000.json", token
+                )
+                assert status == 404, (status, payload)
+                # 백업이 아닌 JSON 은 422
+                (backup_dir / "slide_tool_backup_20260104-090000.json").write_text(
+                    json.dumps({"hello": 1}), encoding="utf-8"
+                )
+                status, payload = token_get(
+                    base, "/api/backup?name=slide_tool_backup_20260104-090000.json", token
+                )
+                assert status == 422 and payload.get("error") == "bad_backup", (status, payload)
+
+            results.append(report("B2 백업 조회: 경로 탈출·링크·비백업 JSON 거부", b2))
+
+            def b3() -> None:
+                for path in ("/api/backups", "/api/backup?name=slide_tool_backup_20260102-090000.json"):
+                    status, _ = token_get(base, path, None)
+                    assert status == 401, (path, status)
+                    status, _ = token_get(base, path, "wrong")
+                    assert status == 403, (path, status)
+
+            results.append(report("B3 백업 API: 토큰 없음·오답 거부", b3))
+
+        with tempfile.TemporaryDirectory(prefix="workflow_goodbye_") as temp_dir:
+            temp = Path(temp_dir)
+            pkg = make_pkg(temp)
+            process, base, token = start_server(pkg, processes)   # --no-watchdog
+
+            def g1() -> None:
+                status, _, _ = http_request("POST", base + "/heartbeat")
+                assert status == 204, status
+                status, _, _ = http_request("POST", base + "/goodbye")
+                assert status == 204, status
+                time.sleep(5.6)   # 종료 유예(4.5초)를 넘겨도 살아 있어야 한다
+                assert process.poll() is None, "--no-watchdog 인데 /goodbye 로 서버가 꺼졌습니다."
+                status, payload = token_get(base, "/api/status", token)
+                assert status == 200 and payload.get("workflow") is True, (status, payload)
+
+            results.append(report("G1 --no-watchdog: /goodbye 뒤에도 서버가 살아 있음", g1))
+    finally:
+        for process in processes:
+            stop_process(process)
+    return results
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "regress", "detect"))
+    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "regress", "detect", "event"))
     return parser.parse_args(argv)
 
 
@@ -2022,11 +2413,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         "export": run_export_modes,
         "regress": run_export_regress,
         "detect": run_auto_detect,
+        "event": run_new_event,
     }
     selected = (
         [args.only]
         if args.only
-        else ["auth", "upload", "rename", "job", "export", "regress", "detect"]
+        else ["auth", "upload", "rename", "job", "export", "regress", "detect", "event"]
     )
     results: list[bool] = []
     try:
