@@ -36,6 +36,7 @@ body.navcol #navToggle{left:0}
 .badge{display:inline-block;background:#eef4ff;color:var(--acc2);border:1px solid #c7d7fe;border-radius:20px;padding:2px 9px;font-size:11px;margin:2px 4px 2px 0}
 .badge.done{background:#ecfdf3;color:var(--ok);border-color:#bbf7d0}
 .badge.excluded{background:#fef2f2;color:var(--bad);border-color:#fecaca}
+.badge.review{background:#fffbeb;color:#b45309;border-color:#fde68a}
 .muted{color:var(--mut);font-size:13px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
@@ -230,6 +231,10 @@ body.colormode .previewHint{display:none}
         <button id="bulkRotateCcwBtn" class="btn sm" onclick="bulkRotateSelected(-1)" disabled
           title="고른 슬라이드를 한꺼번에 반시계방향 90° 돌립니다"><span class="rotGlyph">⟲</span>반시계 90°</button>
       </div>
+      <!-- 지금 그룹 전체의 스크린 경계를 자동으로 찾는다. 이미 손댄(모서리를 고치거나 완료 표시한) 사진은
+           건드리지 않는다 — Alt 를 누르고 누르면 덮어쓴다. 서버 없이 열면 비활성. -->
+      <button id="groupAutoDetectBtn" class="btn sm" onclick="autoDetectGroup(curFolder,event.altKey)" disabled
+        title="워크플로 서버 연결을 확인하는 중입니다.">이 그룹 자동 찾기</button>
     </div>
     <div id="folderList"></div>
   </nav>
@@ -286,6 +291,8 @@ body.colormode .previewHint{display:none}
             <button id="pasteCornersBtn" class="btn sm" onclick="pasteCorners()" disabled>경계 붙여넣기</button>
             <button id="rotateCwBtn" class="btn sm" onclick="rotateCurrentSlide(1)" title="원본 화면과 보정 결과를 함께 시계방향으로 90° 돌립니다 — 카메라를 눕혀 찍어 옆으로 누운 사진 세우기 (원본 파일은 그대로)"><span class="rotGlyph">⟳</span> 시계 90°</button>
             <button id="rotateCcwBtn" class="btn sm" onclick="rotateCurrentSlide(-1)" title="원본 화면과 보정 결과를 함께 반시계방향으로 90° 돌립니다 (원본 파일은 그대로)"><span class="rotGlyph">⟲</span> 반시계 90°</button>
+            <button id="autoDetectBtn" class="btn sm" onclick="autoDetectCurrent()" disabled title="워크플로 서버 연결을 확인하는 중입니다.">자동 찾기</button>
+            <button id="autoUndoBtn" class="btn sm" onclick="undoAutoDetect()" disabled title="되돌릴 자동 찾기가 없습니다">찾기 되돌리기</button>
             <span id="cornerClipboardStatus" class="muted"></span>
           </div>
           <div id="stage" class="stage">
@@ -674,6 +681,7 @@ function pasteCorners(){
   if(!cornerClipboard)return;
   const slide=currentSlide();if(!slide)return;
   setCorners(slide.file,cloneCorners(cornerClipboard.corners));
+  if(clearReview(slide.file)){updateStatusUi();renderNav();}
   ratioStore[slide.file]=cornerClipboard.ratio;
   writeStore(LS_RATIOS,ratioStore);
   updateRatioButtons();
@@ -747,6 +755,168 @@ function updateBulkRotateUi(){
     btn.title=(n?`선택한 ${n}장을 한꺼번에 `:'목록에서 Shift(범위)·Ctrl/⌘(개별) 클릭으로 슬라이드를 고른 뒤 ')
       +(id==='bulkRotateCwBtn'?'시계방향':'반시계방향')+' 90° 돌립니다';
   });
+}
+
+// ---- 슬라이드 경계 자동 찾기 ----
+// 서버(/api/auto-detect)가 OpenCV 로 사진 안의 스크린 사각형을 찾아 준다. 꼭짓점은 늘 **원본 사진 좌표**이고
+// 순서는 화면에서 본 [TL,TR,BL,BR] 이다. 이미 90° 돌려 세운 사진(코너 배열 순환 = stageRot)은 그 회전 횟수를
+// 서버에 알려 돌려 세운 채로 찾게 하므로, 결과를 그대로 cornersStore 에 넣어도 회전 상태가 유지된다
+// (저장 규약은 handle 드래그의 fromDisp 와 같다). 검출은 디스크의 img 축소본 기준이고 브라우저도 같은
+// 파일을 그대로 보므로 좌표계가 일치한다.
+// 되돌리기는 undoStacks(색보정 전용)와 따로 — 직전 자동 찾기 한 번만 기억한다.
+const AUTO_CHUNK=8;       // 서버에 한 번에 보낼 장수. 요청마다 끝나서 진행 표시·중간 실패 처리가 쉽다
+let autoDetectBusy=false;
+let autoUndo=null;        // {items:[{file,prev,prevStatus,applied}]}
+// 손대지 않은 상태 = 기본 코너이거나 그것을 90° 돌리기만 한 순환 배열
+const ROTATED_DEFAULTS=[0,1,2,3].map(k=>{let c=cloneCorners(DEFAULT_CORNERS);for(let i=0;i<k;i++)c=rotateCorners(c,1);return c;});
+function sameCorners(a,b){
+  return !!a&&!!b&&a.length===4&&b.length===4&&a.every((p,i)=>Math.abs(p[0]-b[i][0])<1e-6&&Math.abs(p[1]-b[i][1])<1e-6);
+}
+function isUntouchedCorners(file){
+  const c=cornersStore[file];if(!c)return true;
+  return ROTATED_DEFAULTS.some(d=>sameCorners(c,d));
+}
+function clearReview(file){
+  const st=statusStore[file];if(!st||!st.review)return false;
+  const next={...st};delete next.review;
+  if(Object.keys(next).length)statusStore[file]=next;else delete statusStore[file];
+  writeStore(LS_STATUS,statusStore);
+  return true;
+}
+function autoDetectAvailability(){
+  if(location.protocol==='file:')return {enabled:false,reason:'시작 파일로 연 워크플로 서버에서만 자동으로 찾을 수 있습니다.'};
+  const wf=window.__slideWorkflow;
+  if(!wf||typeof wf.autoDetectAvailability!=='function')return {enabled:false,reason:'워크플로 서버 연결을 확인하는 중입니다.'};
+  if(autoDetectBusy)return {enabled:false,reason:'자동 찾기를 진행 중입니다.'};
+  return wf.autoDetectAvailability();
+}
+function updateAutoDetectUi(){
+  const a=autoDetectAvailability();
+  const slide=currentSlide();
+  const one=document.getElementById('autoDetectBtn');
+  if(one){
+    one.disabled=!a.enabled||!slide||isDeck(slide.file);
+    one.textContent=autoDetectBusy?'찾는 중…':'자동 찾기';
+    one.title=a.enabled?'이 사진에서 슬라이드(스크린) 경계를 찾아 네 모서리를 맞춥니다. 어긋나면 손잡이로 고치거나 «찾기 되돌리기»':a.reason;
+  }
+  const group=document.getElementById('groupAutoDetectBtn');
+  if(group){
+    group.disabled=!a.enabled||!curFolder;
+    group.textContent=autoDetectBusy?'찾는 중…':'이 그룹 자동 찾기';
+    group.title=a.enabled?'이 그룹 사진의 스크린 경계를 한꺼번에 찾습니다. 이미 손댄(모서리를 고쳤거나 완료 표시한) 사진은 건너뜁니다 — Alt+클릭: 덮어쓰기':a.reason;
+  }
+  const undo=document.getElementById('autoUndoBtn');
+  if(undo){
+    undo.disabled=!autoUndo||autoDetectBusy;
+    undo.title=autoUndo?`직전 자동 찾기(${autoUndo.items.length}장)를 되돌립니다`:'되돌릴 자동 찾기가 없습니다';
+  }
+}
+document.addEventListener('slideworkflow:state',updateAutoDetectUi);
+
+async function runAutoDetect(targets,label){
+  const wf=window.__slideWorkflow;
+  const results={};let error=null;
+  autoDetectBusy=true;updateAutoDetectUi();
+  try{
+    for(let i=0;i<targets.length;i+=AUTO_CHUNK){
+      const part=targets.slice(i,i+AUTO_CHUNK);
+      if(targets.length>AUTO_CHUNK)toast(`${label} 자동으로 찾는 중… ${i}/${targets.length}장`,60000);
+      const rotations={};part.forEach(t=>{if(t.rot)rotations[t.file]=t.rot;});
+      const payload=await wf.autoDetect(part.map(t=>t.file),rotations);
+      Object.assign(results,payload&&payload.results||{});
+    }
+  }catch(e){error=e;}
+  finally{autoDetectBusy=false;}
+  return {results,error};
+}
+
+// 결과를 저장소에 넣는다. writeStore 는 호출마다 저장소 전체를 직렬화하므로 마지막에 한 번씩만 쓴다.
+// 반환 {found, review} — review = 확신이 낮아 확인이 필요하거나(꼭짓점은 넣는다) 아예 못 찾은 장수.
+function applyAutoResults(targets,results){
+  const items=[];let found=0,review=0;
+  targets.forEach(t=>{
+    const r=results[t.file];
+    if(!r||origFolderOf(t.file)===null)return;    // 그 사이 사라진 사진(이름 변경 등)은 건너뛴다
+    const okCorners=Array.isArray(r.corners)&&r.corners.length===4
+      &&r.corners.every(p=>Array.isArray(p)&&p.length===2&&Number.isFinite(+p[0])&&Number.isFinite(+p[1]));
+    const item={file:t.file,prev:cornersStore[t.file]?cloneCorners(cornersStore[t.file]):null,
+      prevStatus:statusStore[t.file]?{...statusStore[t.file]}:null,applied:null};
+    if(okCorners){
+      cornersStore[t.file]=r.corners.map(p=>[+(+p[0]).toFixed(5),+(+p[1]).toFixed(5)]);
+      item.applied=cloneCorners(cornersStore[t.file]);
+    }
+    const st={...statusFor(t.file)};
+    if(r.review||!okCorners){st.review=true;review++;}else{delete st.review;found++;}
+    if(Object.keys(st).length)statusStore[t.file]=st;else delete statusStore[t.file];
+    items.push(item);
+  });
+  if(!items.length)return {found,review};
+  writeStore(LS_CORNERS,cornersStore);
+  writeStore(LS_STATUS,statusStore);
+  autoUndo={items};
+  const cur=currentSlide();
+  if(cur&&items.some(it=>it.file===cur.file)){syncStageRot();layoutStage();positionHandles();scheduleRender();updateStatusUi();}
+  renderNav();
+  return {found,review};
+}
+
+async function autoDetectCurrent(){
+  const slide=currentSlide();if(!slide||isDeck(slide.file)||autoDetectBusy)return;
+  const a=autoDetectAvailability();
+  if(!a.enabled){toast(a.reason);return;}
+  // stageRot = 화면에 지금 보이는 회전(이미 돌려 세웠다면 세운 채로 찾는다). 다른 사진으로 넘어가도 이 값은 요청 시점 것이다.
+  const target={file:slide.file,rot:stageRot};
+  const {results,error}=await runAutoDetect([target],'');
+  if(error){toast('자동 찾기 실패: '+(error.detail||error.message),6000);updateAutoDetectUi();return;}
+  const r=results[slide.file];
+  const {found}=applyAutoResults([target],results);
+  const hasCorners=!!(r&&r.corners);
+  toast(found?'경계를 찾았습니다 — 어긋나면 손잡이로 고치거나 «찾기 되돌리기»'
+    :hasCorners?'경계를 찾았지만 확실하지 않습니다 — 확인 필요':'경계를 찾지 못했습니다 — 직접 지정하세요',5000);
+  updateAutoDetectUi();
+}
+
+// 그룹 단위. 이미 손댄 사진(코너를 고쳤거나 완료 표시)·제외·발표자료는 건드리지 않는다(overwrite 면 손댄 사진도 덮어쓴다).
+async function autoDetectGroup(folder,overwrite){
+  if(!folder||autoDetectBusy)return;
+  const a=autoDetectAvailability();
+  if(!a.enabled){toast(a.reason);return;}
+  const targets=[];let skipped=0;
+  (DATA[folder]||[]).forEach(s=>{
+    if(isDeck(s.file)||statusFor(s.file).excluded)return;
+    if(!overwrite&&(!isUntouchedCorners(s.file)||statusFor(s.file).done)){skipped++;return;}
+    // 손대지 않은 사진의 코너는 기본값의 순환뿐이라 크기를 몰라도 회전 횟수를 정확히 읽는다.
+    targets.push({file:s.file,rot:deriveStageRot(getCorners(s.file),1,1)});
+  });
+  const skipNote=skipped?` · 이미 손댄 ${skipped}장은 건너뜀`:'';
+  if(!targets.length){toast('자동으로 찾을 사진이 없습니다'+skipNote+(skipped?' (Alt+클릭: 덮어쓰기)':''),5000);return;}
+  const {results,error}=await runAutoDetect(targets,'«'+folder+'»');
+  const {found,review}=applyAutoResults(targets,results);
+  const done=found+review;
+  let msg=`${targets.length}장 중 ${found}장 찾음`+(review?`, ${review}장 확인 필요`:'')+skipNote;
+  if(error)msg=`자동 찾기가 중간에 멈췄습니다(${error.detail||error.message}) — ${done}장 처리`+(done?` · ${found}장 찾음, ${review}장 확인 필요`:'');
+  toast(msg+(done?' · «찾기 되돌리기»로 취소':''),8000);
+  updateAutoDetectUi();
+}
+
+function undoAutoDetect(){
+  if(!autoUndo||autoDetectBusy)return;
+  let n=0,kept=0;
+  autoUndo.items.forEach(it=>{
+    if(it.applied){
+      if(!sameCorners(cornersStore[it.file],it.applied)){kept++;return;}   // 그 뒤 손으로 고친 사진은 그대로 둔다
+      if(it.prev)cornersStore[it.file]=it.prev;else delete cornersStore[it.file];
+    }
+    if(it.prevStatus)statusStore[it.file]=it.prevStatus;else delete statusStore[it.file];
+    n++;
+  });
+  autoUndo=null;
+  writeStore(LS_CORNERS,cornersStore);
+  writeStore(LS_STATUS,statusStore);
+  if(currentSlide()){syncStageRot();layoutStage();positionHandles();scheduleRender();updateStatusUi();}
+  renderNav();
+  toast(`자동 찾기를 되돌렸습니다 (${n}장${kept?`, 직접 고친 ${kept}장은 그대로`:''})`);
+  updateAutoDetectUi();
 }
 
 function toggleNav(){const c=document.body.classList.toggle('navcol');document.getElementById('navToggle').textContent=c?'▶':'◀';}
@@ -891,7 +1061,7 @@ function renderNav(){
             folder===curFolder&&selectedIdx.has(i)?'selected':'',
             st.excluded?'excluded':''
           ].join(' ');
-          const state=`${isDeck(s.file)?'<span class="badge deck">자료</span>':''}${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':''}`;
+          const state=`${isDeck(s.file)?'<span class="badge deck">자료</span>':''}${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':''}${st.review?'<span class="badge review">확인 필요</span>':''}`;
           const deck=isDeck(s.file);
           return `<button class="slideItem ${cls} ${deck?'deckItem':''}" draggable="${deck?'false':'true'}" data-folder="${esc(folder)}" data-index="${i}" data-file="${esc(s.file)}" data-deck="${deck?'1':''}">
             <img class="thumb" src="${esc(s.file)}" alt="">
@@ -1022,6 +1192,7 @@ function renderNav(){
     });
   });
   updateBulkRotateUi();   // 일괄 회전 버튼은 이 innerHTML 재렌더 범위 밖이라 따로 갱신한다
+  updateAutoDetectUi();   // 그룹 자동 찾기 버튼도 마찬가지 — 현재 그룹·서버 상태를 따라간다
 }
 
 function selectSlide(folder,index){
@@ -1033,6 +1204,7 @@ function selectSlide(folder,index){
 
 function loadSlide(){
   const slide=currentSlide();
+  updateAutoDetectUi();
   document.getElementById('empty').style.display=slide?'none':'block';
   document.getElementById('editor').style.display=slide?'block':'none';
   if(!slide)return;
@@ -1071,7 +1243,7 @@ function updateStatusUi(){
   const st=statusFor(slide.file);
   document.getElementById('doneBtn').classList.toggle('on',!!st.done);
   document.getElementById('excludeBtn').classList.toggle('on',!!st.excluded);
-  document.getElementById('statusBadges').innerHTML=`${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':'<span class="badge">검수 대상</span>'}`;
+  document.getElementById('statusBadges').innerHTML=`${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':'<span class="badge">검수 대상</span>'}${st.review?'<span class="badge review" title="자동 찾기 결과가 확실하지 않거나 찾지 못했습니다 — 모서리를 확인하세요">확인 필요</span>':''}`;
 }
 
 function updateRatioButtons(){
@@ -1090,6 +1262,7 @@ function toggleStatus(key){
   const slide=currentSlide();if(!slide)return;
   const st=statusStore[slide.file]||{};
   st[key]=!st[key];
+  if(key==='done'&&st.done)delete st.review;   // 확인을 마쳤다는 뜻 — '확인 필요' 표시를 내린다
   statusStore[slide.file]=st;
   writeStore(LS_STATUS,statusStore);
   updateStatusUi();renderNav();
@@ -1165,7 +1338,14 @@ function openFolderCtxMenu(x,y,folder){
   renameBtn.type='button';renameBtn.textContent='이름 변경';renameBtn.disabled=!availability.enabled;
   if(!availability.enabled)renameBtn.title=availability.reason;
   renameBtn.onclick=()=>{closeFolderCtxMenu();startGroupRename(folder);};
-  menu.appendChild(renameBtn);document.body.appendChild(menu);
+  menu.appendChild(renameBtn);
+  const detect=autoDetectAvailability();
+  const detectBtn=document.createElement('button');
+  detectBtn.type='button';detectBtn.textContent='이 그룹 자동 찾기';detectBtn.disabled=!detect.enabled;
+  detectBtn.title=detect.enabled?'이미 손댄 사진은 건드리지 않습니다 (Alt+클릭: 덮어쓰기)':detect.reason;
+  detectBtn.onclick=e=>{const overwrite=e.altKey;closeFolderCtxMenu();autoDetectGroup(folder,overwrite);};
+  menu.appendChild(detectBtn);
+  document.body.appendChild(menu);
   folderCtxMenuClickHandler=e=>{if(!menu.contains(e.target))closeFolderCtxMenu();};
   folderCtxMenuKeyHandler=e=>{if(e.key==='Escape')closeFolderCtxMenu();};
   folderCtxMenuScrollHandler=()=>closeFolderCtxMenu();
@@ -1239,6 +1419,7 @@ function resetCorners(){
   const slide=currentSlide();if(!slide)return;
   delete cornersStore[slide.file];
   writeStore(LS_CORNERS,cornersStore);
+  if(clearReview(slide.file)){updateStatusUi();renderNav();}
   syncStageRot();layoutStage();
   positionHandles();scheduleRender();
 }
@@ -1394,6 +1575,7 @@ document.querySelectorAll('.cornerHandle').forEach(handle=>{
       const y=Math.max(0,Math.min(1,(ev.clientY-stage.top)/stage.height));
       corners[idx]=fromDisp([x,y],stageRot);   // 화면에서 집은 점을 원본 사진 좌표로 되돌려 저장
       setCorners(slide.file,corners);
+      if(clearReview(slide.file)){updateStatusUi();renderNav();}   // 손으로 고치기 시작하면 '확인 필요' 를 내린다
       positionHandles();
       scheduleRender();
     };
@@ -1423,6 +1605,7 @@ document.querySelectorAll('.edgeHandle').forEach(handle=>{
       corners[a]=[Math.max(0,Math.min(1,startA[0]+dx)),Math.max(0,Math.min(1,startA[1]+dy))];
       corners[b]=[Math.max(0,Math.min(1,startB[0]+dx)),Math.max(0,Math.min(1,startB[1]+dy))];
       setCorners(slide.file,corners);
+      if(clearReview(slide.file)){updateStatusUi();renderNav();}
       positionHandles();
       scheduleRender();
     };

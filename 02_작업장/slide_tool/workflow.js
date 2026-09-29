@@ -540,6 +540,37 @@
     });
   }
 
+  // 보정 화면의 '자동 찾기' — 서버가 사진 안의 슬라이드 경계를 OpenCV 로 찾아 준다(동기 응답).
+  // 서버 없이 파일로 연 경우(state.disabled)에는 쓸 수 없고, 준비·PDF 잡이 도는 동안에도 잠근다.
+  function autoDetectAvailability() {
+    if (state.disabled) {
+      return {enabled: false, reason: '시작 파일로 연 워크플로 서버에서만 자동으로 찾을 수 있습니다.'};
+    }
+    if (!TOKEN || !state.status) {
+      return {enabled: false, reason: '워크플로 서버 연결을 확인하는 중입니다.'};
+    }
+    if (isBusy() || state.uploading) {
+      return {enabled: false, reason: '실행 중인 작업이 끝난 뒤 쓰세요.'};
+    }
+    return {enabled: true, reason: ''};
+  }
+
+  function autoDetect(keys, rotations) {
+    var availability = autoDetectAvailability();
+    if (!availability.enabled) return Promise.reject(new Error(availability.reason));
+    return api('/api/auto-detect', {
+      method: 'POST',
+      json: {keys: keys, rotations: rotations || {}}
+    });
+  }
+
+  // index.html 의 버튼 활성 상태가 서버 연결·잡 진행을 따라가도록 알린다.
+  function notifyState() {
+    try {
+      document.dispatchEvent(new CustomEvent('slideworkflow:state'));
+    } catch (_error) { /* 구형 브라우저 — 버튼은 다음 화면 갱신 때 맞춰진다 */ }
+  }
+
   function fetchToken() {
     return api('/api/token').then(function (payload) {
       if (!payload || payload.ok !== true || typeof payload.token !== 'string') {
@@ -558,6 +589,7 @@
         ui.panel.hidden = true;
         restoreCorrectionEditor();
         document.body.classList.remove('wfCorrectionCollapsed');
+        notifyState();
         return null;
       }
       state.status = payload;
@@ -565,6 +597,7 @@
       attachCorrectionEditor();
       ui.panel.hidden = false;
       renderPanel(payload);
+      notifyState();
       if (payload.job && payload.job.state === 'running' && !state.pollTimer) {
         state.job = payload.job;
         state.activeKind = payload.job.kind;
@@ -580,6 +613,7 @@
         ui.panel.hidden = true;
         restoreCorrectionEditor();
         document.body.classList.remove('wfCorrectionCollapsed');
+        notifyState();
         return null;
       }
       showBanner('서버 상태를 읽지 못했습니다 — 시작 파일로 도구를 다시 여세요.\n' + error.message, 'error');
@@ -959,6 +993,7 @@
   }
 
   function renderProgress() {
+    notifyState();
     if (!ui.progress) return;
     if (state.uploading || state.uploadPercent === 100) {
       ui.progress.classList.add('show');
@@ -1010,6 +1045,7 @@
       bindDnD();
     }).catch(function (error) {
       state.disabled = true;
+      notifyState();
       if (unavailable(error)) {
         ui.panel.hidden = true;
         restoreCorrectionEditor();
@@ -1029,7 +1065,9 @@
   window.__slideWorkflow = {
     refreshStatus: refreshStatus,
     renameAvailability: renameAvailability,
-    renameGroup: renameGroup
+    renameGroup: renameGroup,
+    autoDetectAvailability: autoDetectAvailability,
+    autoDetect: autoDetect
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

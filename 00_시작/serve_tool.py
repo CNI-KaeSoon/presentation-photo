@@ -54,6 +54,13 @@ UPLOAD_EXTS = (
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_EXPORT_BODY_BYTES = 64 * 1024 * 1024
 MAX_RENAME_BODY_BYTES = 64 * 1024
+MAX_AUTO_DETECT_BODY_BYTES = 64 * 1024
+MAX_AUTO_DETECT_KEYS = 32
+AUTO_DETECT_TIMEOUT = 120
+# conf(정답과 5% 이내로 맞을 확률 0~1)가 이 값보다 낮거나 검출이 null 이면 review=true.
+# 교차 검증에서 conf<0.5 사진은 hit@5% 가 약 0.3 이었다.
+AUTO_DETECT_REVIEW_BELOW = 0.5
+AUTO_DETECT_EXTS = (".jpg", ".jpeg", ".png")
 STREAM_CHUNK_BYTES = 1024 * 1024
 WINDOWS_RESERVED = frozenset(
     {"con", "prn", "aux", "nul"}
@@ -247,6 +254,15 @@ def safe_group_name(raw: object) -> tuple[Optional[str], str]:
     if value.split(".", 1)[0].casefold() in WINDOWS_RESERVED:
         return None, "운영체제 예약 그룹 이름은 사용할 수 없습니다."
     return value, ""
+
+
+def is_within(path: Path, root: Path) -> bool:
+    """resolve 된 경로가 root 안(자신 포함)인지 확인한다. export_pdf.is_within 과 같은 판정."""
+    try:
+        common = os.path.commonpath((str(path), str(root)))
+    except ValueError:
+        return False
+    return os.path.normcase(common) == os.path.normcase(str(root))
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
@@ -517,6 +533,7 @@ class WorkflowContext:
         self.port = port
         self.token = secrets.token_urlsafe(32)
         self.jobs = JobManager()
+        self.detect_lock = threading.Lock()
         self.src = pkg_root / "01_원본사진" if pkg_root else None
         self.work = pkg_root / "02_작업장" if pkg_root else None
         self.out = pkg_root / "03_결과물" if pkg_root else None
@@ -766,6 +783,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             "/api/rename-group": self.api_rename_group,
             "/api/prepare": self.api_prepare,
             "/api/export-pdf": self.api_export_pdf,
+            "/api/auto-detect": self.api_auto_detect,
             "/api/job/cancel": self.api_job_cancel,
         }
         handler = routes.get(endpoint)
@@ -1358,6 +1376,174 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             self._error(409, "busy", "다른 작업이 실행 중입니다.")
             return
         self._send_json({"ok": True, "job": {"id": job.id, "kind": job.kind}}, 202)
+
+    def _resolve_work_image(self, key: object) -> tuple[Optional[Path], str, str]:
+        """도구의 이미지 키 `../<그룹>/img/<파일>` 을 작업장 안의 실제 사진으로 바꾼다."""
+        if not isinstance(key, str) or not key or "\x00" in key:
+            return None, "bad_key", "이미지 키는 비어 있지 않은 문자열이어야 합니다."
+        parts = key.split("/")
+        if len(parts) != 4 or parts[0] != ".." or parts[2] != "img":
+            return None, "bad_key", "이미지 키는 ../<그룹>/img/<파일> 형식이어야 합니다."
+        group, reason = safe_group_name(parts[1])
+        if group is None:
+            return None, "bad_key", f"이미지 키의 그룹 이름 거부: {reason}"
+        name = nfc(parts[3])
+        if (
+            not name
+            or name in {".", ".."}
+            or name.startswith(".")
+            or "\\" in name
+            or re.match(r"^[A-Za-z]:", name)
+            or any(unicodedata.category(char) == "Cc" for char in name)
+        ):
+            return None, "bad_key", "이미지 키의 파일 이름이 올바르지 않습니다."
+        if Path(name).suffix.lower() not in AUTO_DETECT_EXTS:
+            return None, "bad_key", "jpg·png 사진만 찾을 수 있습니다."
+        disk_group = self._export_group_names().get(group)
+        if disk_group is None:
+            return None, "image_not_found", f"작업장에 없는 그룹입니다: {group}"
+        assert self.workflow.work is not None
+        image_dir = self.workflow.work / disk_group / "img"
+        try:
+            image_root = image_dir.resolve()
+            candidate = image_dir / parts[3]
+            if not candidate.exists():
+                # macOS 파일시스템은 한글을 NFD 로 저장한다 — NFC 로 맞춰 다시 찾는다.
+                matches = [path for path in image_dir.iterdir() if nfc(path.name) == name]
+                if len(matches) != 1:
+                    return None, "image_not_found", f"사진을 찾지 못했습니다: {name}"
+                candidate = matches[0]
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError):
+            return None, "image_not_found", f"사진을 찾지 못했습니다: {name}"
+        if resolved.parent != image_root or not is_within(resolved, image_root):
+            return None, "bad_key", "작업장 img 폴더 밖 파일은 사용할 수 없습니다."
+        if not resolved.is_file():
+            return None, "image_not_found", f"사진을 찾지 못했습니다: {name}"
+        return resolved, "", ""
+
+    def api_auto_detect(self) -> None:
+        """사진 여러 장의 슬라이드 경계(4꼭짓점)를 자동으로 찾는다 — 동기 응답.
+
+        요청 {"keys": ["../그룹/img/파일.jpg", ...], "rotations": {키: 0~3}}  (rotations 선택)
+        응답 {"ok": true, "results": {키: {"corners": [[x,y]x4]|null, "conf": 0~1, "review": bool}}}
+        corners 는 원본 사진 정규좌표 [TL,TR,BL,BR](화면에서 본 방향 기준). 그룹 전체는 클라이언트가
+        여러 번에 나눠 부른다 — 요청마다 끝나므로 진행률·취소를 잡 체계 없이 처리할 수 있다.
+        """
+        payload = self._read_json_body(MAX_AUTO_DETECT_BODY_BYTES)
+        if payload is None:
+            return
+        keys = payload.get("keys")
+        rotations = payload.get("rotations", {})
+        if not isinstance(keys, list) or not keys or len(keys) > MAX_AUTO_DETECT_KEYS:
+            self._error(
+                400,
+                "bad_request",
+                f"keys는 1~{MAX_AUTO_DETECT_KEYS}개의 이미지 키 배열이어야 합니다.",
+            )
+            return
+        if not isinstance(rotations, dict):
+            self._error(400, "bad_request", "rotations는 {이미지 키: 0~3} 객체여야 합니다.")
+            return
+        ordered: list[str] = []
+        paths: dict[str, Path] = {}
+        for key in keys:
+            path, code, detail = self._resolve_work_image(key)
+            if path is None:
+                self._error(404 if code == "image_not_found" else 400, code, detail)
+                return
+            assert isinstance(key, str)
+            if key not in paths:
+                ordered.append(key)
+                paths[key] = path
+        if any(key not in paths for key in rotations):
+            self._error(400, "bad_request", "rotations에 keys에 없는 키가 있습니다.")
+            return
+        items: list[dict[str, object]] = []
+        for key in ordered:
+            rot = rotations.get(key, 0)
+            if isinstance(rot, bool) or not isinstance(rot, int) or not 0 <= rot <= 3:
+                self._error(400, "bad_request", "rotations 값은 0~3 정수여야 합니다.")
+                return
+            items.append({"path": str(paths[key]), "rot": rot})
+        if self.workflow.jobs.busy:
+            self._error(409, "busy", "다른 작업이 실행 중입니다.")
+            return
+        python, _env = self._job_prerequisites()
+        if python is None:
+            return
+        assert self.workflow.scripts is not None
+        runner = self.workflow.scripts / "auto_detect_api.py"
+        if not runner.is_file():
+            self._error(500, "detector_missing", "auto_detect_api.py를 찾지 못했습니다.")
+            return
+        if not self.workflow.detect_lock.acquire(blocking=False):
+            self._error(409, "busy", "다른 자동 찾기가 실행 중입니다.")
+            return
+        try:
+            child_env = dict(os.environ)
+            child_env["PYTHONIOENCODING"] = "utf-8:replace"
+            child_env["PYTHONUTF8"] = "1"
+            try:
+                completed = subprocess.run(
+                    [str(python), str(runner)],
+                    input=json.dumps({"items": items}, ensure_ascii=False),
+                    cwd=str(runner.parent),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=child_env,
+                    timeout=AUTO_DETECT_TIMEOUT,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                self._error(504, "detect_timeout", "자동 찾기가 시간 안에 끝나지 않았습니다.")
+                return
+            except OSError as exc:
+                self._error(500, "detect_failed", f"자동 찾기를 실행하지 못했습니다: {exc}")
+                return
+        finally:
+            self.workflow.detect_lock.release()
+        lines = [line for line in completed.stdout.splitlines() if line.strip()]
+        try:
+            if completed.returncode != 0 or not lines:
+                raise ValueError("비정상 종료")
+            parsed = json.loads(lines[-1])
+            rows = parsed["results"]
+            if not isinstance(rows, list) or len(rows) != len(ordered):
+                raise ValueError("결과 개수 불일치")
+        except (ValueError, KeyError, TypeError):
+            tail = (completed.stderr or completed.stdout).strip()[-300:]
+            self._error(500, "detect_failed", f"자동 찾기가 실패했습니다: {tail or completed.returncode}")
+            return
+        results: dict[str, object] = {}
+        for key, row in zip(ordered, rows):
+            corners = row.get("corners") if isinstance(row, dict) else None
+            try:
+                conf = float(row.get("conf", 0.0)) if isinstance(row, dict) else 0.0
+            except (TypeError, ValueError):
+                conf = 0.0
+            if not (
+                isinstance(corners, list)
+                and len(corners) == 4
+                and all(
+                    isinstance(pair, list)
+                    and len(pair) == 2
+                    and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in pair)
+                    for pair in corners
+                )
+            ):
+                corners = None
+            if corners is None:
+                conf = 0.0
+            results[key] = {
+                "corners": corners,
+                "conf": conf,
+                "review": corners is None or conf < AUTO_DETECT_REVIEW_BELOW,
+            }
+        self._send_json({"ok": True, "results": results})
 
     def api_job(self) -> None:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)

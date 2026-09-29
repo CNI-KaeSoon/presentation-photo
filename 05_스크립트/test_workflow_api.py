@@ -1430,9 +1430,223 @@ def run_job() -> list[bool]:
     return results
 
 
+# 자동 찾기 API 합성 사진의 정답 꼭짓점 — 화면에서 본 방향 [TL, TR, BL, BR] 정규좌표.
+DETECT_TRUTH = [[0.20, 0.16], [0.80, 0.22], [0.17, 0.84], [0.83, 0.79]]
+DETECT_TOLERANCE = 0.03
+
+
+def ccw_point(point: list[float]) -> list[float]:
+    """PIL ROTATE_90(반시계) 이 사진 안의 한 점(정규좌표)에 하는 일."""
+    return [point[1], 1.0 - point[0]]
+
+
+def make_screen_photo(path: Path, turns: int = 0, size: tuple[int, int] = (800, 600)) -> list[list[float]]:
+    """어두운 배경 위 밝은 원근 사각형 사진을 만들고, 파일 좌표계의 정답 [TL,TR,BL,BR] 을 돌려준다.
+
+    turns = 파일을 반시계 90° 돌린 횟수 — 카메라를 눕혀 찍은 사진을 흉내 낸다. 브라우저는 이 사진을
+    시계방향 turns 번 돌려 세워 보므로 서버에는 rotations={키: turns} 를 보낸다.
+    """
+    from PIL import ImageDraw
+
+    width, height = size
+    image = Image.new("RGB", size, (24, 24, 30))
+    draw = ImageDraw.Draw(image)
+    quad = [(x * width, y * height) for x, y in DETECT_TRUTH]
+    draw.polygon([quad[0], quad[1], quad[3], quad[2]], fill=(235, 235, 225))
+    # 슬라이드 내용처럼 보이는 어두운 블록 몇 개.
+    for left, top, right, bottom in ((0.30, 0.30, 0.70, 0.36), (0.30, 0.45, 0.62, 0.50), (0.30, 0.58, 0.55, 0.63)):
+        draw.rectangle([left * width, top * height, right * width, bottom * height], fill=(60, 70, 110))
+    truth = [list(point) for point in DETECT_TRUTH]
+    for _ in range(turns):
+        image = image.transpose(Image.Transpose.ROTATE_90)
+        truth = [ccw_point(point) for point in truth]
+    image.save(path, quality=95)
+    return truth
+
+
+def max_corner_error(found: list[list[float]], truth: list[list[float]]) -> float:
+    return max(
+        max(abs(fx - tx), abs(fy - ty))
+        for (fx, fy), (tx, ty) in zip(found, truth)
+    )
+
+
+def run_auto_detect() -> list[bool]:
+    results: list[bool] = []
+    processes: list[subprocess.Popen[str]] = []
+    with tempfile.TemporaryDirectory(prefix="workflow_detect_") as temp_dir:
+        temp = Path(temp_dir)
+        pkg = make_pkg(temp)
+        work = pkg / "02_작업장"
+        group = "01_발표"
+        image_dir = work / group / "img"
+        image_dir.mkdir(parents=True)
+        keys = {
+            "upright": f"../{group}/img/UPRIGHT.jpg",
+            "side": f"../{group}/img/SIDE.jpg",
+            "flip": f"../{group}/img/FLIP.png",
+            "blank": f"../{group}/img/BLANK.jpg",
+        }
+        truths = {
+            "upright": make_screen_photo(image_dir / "UPRIGHT.jpg"),
+            "side": make_screen_photo(image_dir / "SIDE.jpg", turns=1),
+            "flip": make_screen_photo(image_dir / "FLIP.png", turns=2),
+        }
+        Image.new("RGB", (400, 300), (90, 90, 90)).save(image_dir / "BLANK.jpg")
+        secret = temp / "secret.png"
+        Image.new("RGB", (120, 90), (220, 20, 30)).save(secret)
+        try:
+            _, base, token = start_server(pkg, processes)
+            endpoint = "/api/auto-detect"
+
+            def d1() -> None:
+                status, headers, payload = json_post(
+                    base,
+                    endpoint,
+                    token,
+                    {
+                        "keys": [keys["upright"], keys["side"], keys["flip"], keys["blank"]],
+                        "rotations": {keys["side"]: 1, keys["flip"]: 2},
+                    },
+                )
+                assert status == 200 and payload.get("ok") is True, (status, payload)
+                assert headers.get("content-type") == "application/json; charset=utf-8"
+                rows = payload.get("results")
+                assert isinstance(rows, dict) and set(rows) == set(keys.values()), rows
+                for name, truth in truths.items():
+                    row = rows[keys[name]]
+                    assert isinstance(row, dict), row
+                    corners = row.get("corners")
+                    assert isinstance(corners, list) and len(corners) == 4, (name, row)
+                    error = max_corner_error(corners, truth)
+                    assert error < DETECT_TOLERANCE, f"{name}: 최대 오차 {error:.4f} {corners} != {truth}"
+                    conf = row.get("conf")
+                    assert isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0, (name, row)
+                    assert row.get("review") is False, (name, row)
+                blank = rows[keys["blank"]]
+                assert blank.get("corners") is None and blank.get("review") is True, blank
+
+            results.append(report("D1 합성 사진 검출 오차·회전 좌표·null 확인", d1))
+
+            def d2() -> None:
+                # 회전 힌트 없이 눕힌 사진을 보내면 좌표계가 어긋난다는 것도 확인 — rotations 가 실제로 쓰인다.
+                status, _, payload = json_post(base, endpoint, token, {"keys": [keys["side"]]})
+                assert status == 200, (status, payload)
+                row = payload["results"][keys["side"]]  # type: ignore[index]
+                corners = row.get("corners")
+                if corners is not None:
+                    assert max_corner_error(corners, truths["side"]) >= DETECT_TOLERANCE, row
+
+            results.append(report("D2 rotations 없으면 회전 사진 좌표 불일치", d2))
+
+            def d3() -> None:
+                (image_dir / "LINK.png").symlink_to(secret)
+                bad_keys = [
+                    ("../01_발표/img/../../../secret.png", 400),
+                    ("../../secret.png", 400),
+                    ("../01_발표/img/..%2f..%2fsecret.png", 400),
+                    ("/etc/passwd", 400),
+                    (str(secret), 400),
+                    ("../01_발표/img/sub/x.png", 400),
+                    ("../01_발표/img/..\\x.png", 400),
+                    ("../../package/02_작업장/01_발표/img/UPRIGHT.jpg", 400),
+                    ("../../01_발표/img/UPRIGHT.jpg", 400),
+                    ("../slide_tool/img/UPRIGHT.jpg", 404),
+                    ("../01_발표/img/UPRIGHT.txt", 400),
+                    ("../01_발표/img/.hidden.jpg", 400),
+                    ("../01_발표/img/NOFILE.jpg", 404),
+                    ("../없는그룹/img/UPRIGHT.jpg", 404),
+                    ("../01_발표/img/LINK.png", 400),
+                    ("", 400),
+                    (None, 400),
+                    (7, 400),
+                ]
+                for key, expected in bad_keys:
+                    status, _, payload = json_post(base, endpoint, token, {"keys": [key]})
+                    assert status == expected, (key, status, payload)
+                    assert payload.get("ok") is False and payload.get("error"), (key, payload)
+                # 한 장이라도 나쁜 키가 섞이면 요청 전체를 거부한다.
+                status, _, payload = json_post(
+                    base, endpoint, token, {"keys": [keys["upright"], "../01_발표/img/NOFILE.jpg"]}
+                )
+                assert status == 404, (status, payload)
+                for body in (
+                    {},
+                    {"keys": []},
+                    {"keys": "../01_발표/img/UPRIGHT.jpg"},
+                    {"keys": [keys["upright"]] * 33},
+                    {"keys": [keys["upright"]], "rotations": []},
+                    {"keys": [keys["upright"]], "rotations": {keys["upright"]: 4}},
+                    {"keys": [keys["upright"]], "rotations": {keys["upright"]: True}},
+                    {"keys": [keys["upright"]], "rotations": {keys["side"]: 1}},
+                ):
+                    status, _, payload = json_post(base, endpoint, token, body)
+                    assert status == 400 and payload.get("error") == "bad_request", (body, status, payload)
+                assert secret.read_bytes() and not (temp / "01_발표").exists()
+
+            results.append(report("D3 경로 탈출·없는 파일·잘못된 본문 거부", d3))
+
+            def d4() -> None:
+                body = json.dumps({"keys": [keys["upright"]]}).encode("utf-8")
+                status, _, raw = http_request(
+                    "POST", base + endpoint,
+                    headers={"Origin": base, "Content-Type": "application/json"},
+                    body=body,
+                )
+                assert status == 401 and decode_json(raw).get("error") == "token_missing", (status, raw)
+                status, _, raw = http_request(
+                    "POST", base + endpoint,
+                    headers={"Origin": base, "X-Workflow-Token": "wrong", "Content-Type": "application/json"},
+                    body=body,
+                )
+                assert status == 403 and decode_json(raw).get("error") == "token_invalid", (status, raw)
+                status, _, raw = http_request(
+                    "POST", base + endpoint,
+                    headers={"X-Workflow-Token": token, "Content-Type": "application/json"},
+                    body=body,
+                )
+                assert status == 403 and decode_json(raw).get("error") == "bad_origin", (status, raw)
+                status, _, raw = http_request(
+                    "POST", base + endpoint,
+                    headers={"Origin": "http://evil.example", "X-Workflow-Token": token,
+                             "Content-Type": "application/json"},
+                    body=body,
+                )
+                assert status == 403 and decode_json(raw).get("error") == "bad_origin", (status, raw)
+                status, _, raw = http_request("GET", base + endpoint, headers={"X-Workflow-Token": token})
+                assert status == 404, (status, raw)
+                status, _, raw = http_request(
+                    "POST", base + endpoint, headers=api_headers(base, token), body=b"{not json"
+                )
+                assert status == 400 and decode_json(raw).get("error") == "bad_json", (status, raw)
+                status, _, raw = declared_request(
+                    "POST", base + endpoint, 1024 * 1024, api_headers(base, token)
+                )
+                assert status == 413, (status, raw)
+
+            results.append(report("D4 토큰·Origin·본문 검증", d4))
+
+            def d5() -> None:
+                # 워크플로 API 가 꺼진 서버 루트(패키지 해석 실패)에서는 503.
+                bare = temp / "bare_server"
+                (bare / "slide_tool").mkdir(parents=True)
+                (bare / "slide_tool" / "index.html").write_text("<!doctype html>", encoding="utf-8")
+                _, bare_base, bare_token = start_server(pkg, processes, root=bare, pkg_arg=bare)
+                status, _, payload = json_post(
+                    bare_base, endpoint, bare_token, {"keys": [keys["upright"]]}
+                )
+                assert status == 503 and payload.get("error") == "workflow_disabled", (status, payload)
+
+            results.append(report("D5 워크플로 비활성 서버 503", d5))
+        finally:
+            for process in processes:
+                stop_process(process)
+    return results
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export"))
+    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "detect"))
     return parser.parse_args(argv)
 
 
@@ -1444,8 +1658,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         "rename": run_rename,
         "job": run_job,
         "export": run_export_modes,
+        "detect": run_auto_detect,
     }
-    selected = [args.only] if args.only else ["auth", "upload", "rename", "job", "export"]
+    selected = [args.only] if args.only else ["auth", "upload", "rename", "job", "export", "detect"]
     results: list[bool] = []
     try:
         for name in selected:
