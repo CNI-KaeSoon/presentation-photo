@@ -60,6 +60,29 @@ body.navcol #navToggle{left:0}
 .slideItem[draggable=true]{cursor:grab}
 .folder.dragover{background:#eff6ff;box-shadow:inset 0 0 0 2px var(--acc)}
 .folder.dragover .folderHead{background:#dbeafe}
+#toastBox{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(12px);
+  z-index:80;background:#0f172a;color:#fff;font-size:13px;font-weight:600;
+  padding:10px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(15,23,42,.28);
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:min(88vw,620px)}
+#toastBox.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#deckView{display:none}
+body.deckmode #deckView{display:block}
+body.deckmode .editorGrid,body.deckmode #colorPanel,body.deckmode #ratioPanel,
+body.deckmode #doneBtn,body.deckmode #colorModeBtn{display:none}
+.deckView .deckStage{display:flex;align-items:center;justify-content:center;
+  background:#0f172a;border-radius:8px;padding:14px;margin-top:10px;min-height:60vh}
+.deckView .deckStage img{max-width:100%;max-height:76vh;object-fit:contain;
+  box-shadow:0 6px 26px rgba(0,0,0,.35);background:#fff}
+.slideItem.deckItem{cursor:default}
+.slideItem.deckItem .thumb{outline:2px solid #c7d2fe}
+.badge.deck{background:#eef2ff;color:#4338ca}
+.slideItem.dropBefore{box-shadow:inset 0 3px 0 0 var(--acc)}
+.slideItem.dropAfter{box-shadow:inset 0 -3px 0 0 var(--acc)}
+.slideItem.dragFollow{background:#f1f5ff;box-shadow:inset 3px 0 0 0 var(--acc);opacity:.85}
+.folder[data-drop-hint]{position:relative}
+.folder[data-drop-hint]::after{content:attr(data-drop-hint);position:absolute;right:8px;top:6px;
+  z-index:40;background:var(--acc);color:#fff;font-size:11px;font-weight:700;
+  padding:3px 8px;border-radius:99px;pointer-events:none;white-space:nowrap}
 .ctxMenu{position:fixed;z-index:50;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgba(15,23,42,.18);padding:4px;min-width:150px}
 .ctxMenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:7px 10px;font-size:12px;cursor:pointer;border-radius:4px;color:var(--ink);font-weight:600}
 .ctxMenu button:hover{background:#f1f5f9}
@@ -230,7 +253,7 @@ body.colormode .previewHint{display:none}
           <button id="colorModeBtn" class="btn sm" onclick="toggleColorMode()" title="PhotoScape식 수동 색보정 모드 (슬라이더·실시간 미리보기)">🎨 색보정</button>
         </div>
       </div>
-      <div class="panel">
+      <div class="panel" id="ratioPanel">
         <div class="topbar" style="margin:0">
           <div class="smallRow">
             <b>출력 비율</b>
@@ -247,6 +270,11 @@ body.colormode .previewHint{display:none}
         </div>
         <div class="muted" style="margin-top:8px">백업은 모든 폴더의 코너·색보정·완료·제외·비율 상태를 JSON으로 저장하거나 복원합니다.<br>PDF는 작업 순서의 ④ PDF 만들기에서 원본 사진을 기준으로 고해상도로 만듭니다.</div>
       </div>
+      <section id="deckView" class="panel deckView">
+        <div class="topbar"><h3 style="margin:0" id="deckTitle">발표자료</h3>
+          <span class="muted">발표자료 원본 — 모서리·색 보정 없이 그대로 씁니다. 위치도 고정입니다.</span></div>
+        <div class="deckStage"><img id="deckImg" alt=""></div>
+      </section>
       <div class="editorGrid">
         <div class="panel stagePanel">
           <div class="topbar">
@@ -351,8 +379,10 @@ body.colormode .previewHint{display:none}
 <script>
 const RAW_DATA=window.SLIDE_DATA||{};
 const folderNames=Object.keys(RAW_DATA);
+const LS_ORDER='slideOrder_v1';          // {folder:[file,...]} — 폴더 안 사용자 지정 순서
 const LS_MOVES='slideMoves_v1';           // {file: targetFolder} — 화자 이동 오버라이드
 const moveStore=readStore(LS_MOVES,{});
+const orderStore=readStore(LS_ORDER,{});
 function _natkey(v){return String(v).split(/(\d+)/).map(x=>/^\d+$/.test(x)?+x:x.toLowerCase());}
 function _natcmp(a,b){const A=_natkey(a),B=_natkey(b);for(let i=0;i<Math.max(A.length,B.length);i++){if(A[i]===undefined)return -1;if(B[i]===undefined)return 1;if(A[i]<B[i])return -1;if(A[i]>B[i])return 1;}return 0;}
 function buildData(){
@@ -361,10 +391,32 @@ function buildData(){
     const tgt=(moveStore[s.file]&&folderNames.includes(moveStore[s.file]))?moveStore[s.file]:f;
     d[tgt].push(s);
   }}
-  for(const f of folderNames)d[f].sort((a,b)=>_natcmp(a.name,b.name));   // keep chronological
+  for(const f of folderNames){
+    // 기본 정렬은 매니페스트의 seq(=EXIF 촬영순, 발표자료는 페이지순).
+    // 파일명 정렬로 대신하면 카메라 카운터가 9999→0000 으로 돌아간 세션이 통째로 뒤집힌다
+    // (실측: 키사이트 IMG_9974~9999 + IMG_0001~0014 가 0001 부터 표시됨).
+    d[f].sort((a,b)=>{
+      const A=(a.seq===undefined?Infinity:a.seq), B=(b.seq===undefined?Infinity:b.seq);
+      return A!==B?A-B:_natcmp(a.name,b.name);
+    });
+    // 사용자가 폴더 안에서 끌어 옮긴 순서가 있으면 그것을 우선한다.
+    // 저장된 목록에 없는 파일(새로 들어왔거나 다른 그룹에서 옮겨온 것)은 자연 정렬 자리에 남긴다.
+    const want=orderStore[f];
+    if(want&&want.length){
+      const pos=new Map(want.map((n,i)=>[n,i]));
+      d[f].sort((a,b)=>{
+        const A=pos.has(a.file)?pos.get(a.file):Infinity, B=pos.has(b.file)?pos.get(b.file):Infinity;
+        return A!==B?A-B:_natcmp(a.name,b.name);
+      });
+    }
+  }
   return d;
 }
 function saveMoves(){writeStore(LS_MOVES,moveStore);}
+function saveOrder(){writeStore(LS_ORDER,orderStore);}
+// 발표자료(PDF 렌더) 페이지 판별. 파일명이 DECK<세션번호>_p<쪽>.jpg 규약이다.
+// 자료는 화면 캡처가 아니라 원본이므로 모서리·색 보정 대상이 아니고, 순서도 고정이다.
+function isDeck(file){return /(^|\/)DECK\d*_p\d+\.[a-z]+$/i.test(String(file||''));}
 let DATA=buildData();
 const DEFAULT_CORNERS=[[0,0],[1,0],[0,1],[1,1]];
 const LS_CORNERS='slideCorners_v1';
@@ -398,6 +450,7 @@ let curIndex=0;
 let selectedIdx=new Set();
 let cornerClipboard=null;
 let lastClickedIdx=null;
+let dragFile=null,dragCount=0;   // 연쇄 이동용 — 잡은 사진과 함께 갈 장수
 let ctxMenuClickHandler=null;
 let ctxMenuKeyHandler=null;
 let ctxMenuScrollHandler=null;
@@ -437,7 +490,9 @@ function showStoreFail(msg){
   if(ss)ss.textContent='💥 저장 실패';
 }
 // slideColor_v1(수동 색보정)도 백업에 포함 — 코너/상태/비율/이동과 함께 라운드트립.
-const BACKUP_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES];
+// slideOrder_v1(폴더 안 순서)도 백업에 포함한다 — 자료 사이에 사진을 끼워 넣은 배치가
+// 백업에 안 들어가면 캐시를 지우는 순간 그 작업만 통째로 사라진다.
+const BACKUP_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES,LS_ORDER];
 function collectBackup(){
   const bak={_type:'slide_tool_backup',_version:1,_savedAt:new Date().toISOString(),data:{}};
   BACKUP_KEYS.forEach(k=>{const v=localStorage.getItem(k);if(v!=null)bak.data[k]=v;});
@@ -596,6 +651,16 @@ function cloneCorners(c){return c.map(p=>[+p[0],+p[1]]);}
 function currentSlide(){return curFolder?DATA[curFolder][curIndex]:null;}
 function getCorners(file){return cloneCorners(cornersStore[file]||DEFAULT_CORNERS);}
 function setCorners(file,corners){cornersStore[file]=corners.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]);writeStore(LS_CORNERS,cornersStore);}
+// 짧은 알림. 연쇄 이동처럼 **한 번에 여러 장이 바뀌는** 동작은 결과를 말해 주지 않으면
+// 사용자가 무슨 일이 일어났는지 모른다.
+let _toastTimer=null;
+function toast(msg,ms){
+  let el=document.getElementById('toastBox');
+  if(!el){el=document.createElement('div');el.id='toastBox';document.body.appendChild(el);}
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>el.classList.remove('show'),ms||3600);
+}
 function statusFor(file){return statusStore[file]||{};}
 function ratioFor(file){return ratioStore[file]||'16:9';}
 
@@ -703,6 +768,91 @@ function moveSlideToFolder(file,targetFolder){
   curIndex=Math.max(0,Math.min(curIndex,(DATA[curFolder]||[]).length-1));
   renderNav();loadSlide();
 }
+// ── 연쇄 이동 ──────────────────────────────────────────────────────
+// 사진은 시간 순서대로 찍히므로, 세션 경계가 어긋났다면 **그 사진부터 끝까지** 통째로
+// 다음 세션에 속한다. 한 장만 옮기면 나머지를 손으로 다 옮겨야 해서 실수가 난다.
+// 그래서 드래그 이동은 "잡은 사진 + 같은 그룹의 그 뒤 전부" 를 기본으로 한다.
+// (한 장만 옮기려면 Alt/Option 을 누른 채 드롭)
+// 따라갈 사진 = 지금 그룹에서 잡은 사진 **이후** + 잡은 사진과 **원래 같은 세션에서 찍힌** 것.
+// 원래 세션으로 한정하지 않으면, 옮긴 뒤 되돌리려고 다시 끌 때 대상 그룹의 원래 사진까지
+// 통째로 딸려온다(실측: 3장 옮긴 뒤 되돌리기가 14장을 움직였다).
+function slidesFromHere(file){
+  for(const f of folderNames){
+    const arr=DATA[f]||[];
+    const i=arr.findIndex(s=>s.file===file);
+    if(i<0)continue;
+    const origin=origFolderOf(file);
+    const files=arr.slice(i).filter(s=>!isDeck(s.file)&&origFolderOf(s.file)===origin).map(s=>s.file);
+    return {folder:f,origin,files};
+  }
+  return {folder:null,origin:null,files:[]};
+}
+function moveSlidesToFolder(files,targetFolder){
+  if(!folderNames.includes(targetFolder)||!files.length)return 0;
+  let n=0;
+  for(const file of files){
+    const cur=(moveStore[file]&&folderNames.includes(moveStore[file]))?moveStore[file]:origFolderOf(file);
+    if(cur===targetFolder)continue;
+    if(targetFolder===origFolderOf(file))delete moveStore[file];else moveStore[file]=targetFolder;
+    n++;
+  }
+  if(!n)return 0;
+  saveMoves();
+  // 출발·도착 폴더에 사용자 지정 순서가 있으면, 옮겨진 파일이 목록에서 빠지거나 끝에 붙도록
+  // 저장된 순서를 정리한다. 그대로 두면 지운 파일이 순서표에 남아 다음 계산을 어긋나게 한다.
+  for(const f of folderNames){
+    if(orderStore[f])orderStore[f]=orderStore[f].filter(x=>!files.includes(x));
+  }
+  saveOrder();
+  DATA=buildData();
+  // 그룹이 바뀌면 목록 인덱스가 재배치된다 — 선택을 그대로 두면 같은 번호가 다른 슬라이드를
+  // 가리켜 이후 일괄 동작(제외·회전)이 엉뚱한 장에 걸린다.
+  selectedIdx.clear();lastClickedIdx=null;
+  curFolder=targetFolder;
+  const arr=DATA[curFolder]||[];
+  const back=arr.findIndex(s=>s.file===files[0]);
+  curIndex=back>=0?back:0;
+  renderNav();loadSlide();
+  return n;
+}
+function moveSlideAndAfterToFolder(file,targetFolder){
+  const {folder,files}=slidesFromHere(file);
+  if(!folder||folder===targetFolder)return 0;
+  return moveSlidesToFolder(files,targetFolder);
+}
+// ── 폴더 안 순서 바꾸기 ────────────────────────────────────────────
+// 발표자료(DECK) 페이지 사이에 현장 사진을 끼워 넣기 위한 기능. 파일명 정렬만으로는
+// 자료 뒤에 사진이 몰려서, 어느 장표 옆에 있어야 하는지 표현할 수 없다.
+function snapshotOrder(folder){
+  orderStore[folder]=(DATA[folder]||[]).map(s=>s.file);
+}
+// files 를 target 앞(before=true) 또는 뒤에 삽입한다. 같은 폴더 안에서만 동작.
+function reorderWithin(folder,files,targetFile,before){
+  const arr=(DATA[folder]||[]).map(s=>s.file);
+  if(!arr.length)return 0;
+  const set=new Set(files);
+  if(set.has(targetFile))return 0;                 // 자기 자신 위로 떨구면 무시
+  const rest=arr.filter(f=>!set.has(f));
+  let at=rest.indexOf(targetFile);
+  if(at<0)return 0;
+  if(!before)at+=1;
+  rest.splice(at,0,...files);
+  orderStore[folder]=rest;
+  saveOrder();
+  DATA=buildData();
+  selectedIdx.clear();lastClickedIdx=null;
+  curFolder=folder;
+  const i=(DATA[folder]||[]).findIndex(s=>s.file===files[0]);
+  curIndex=i>=0?i:0;
+  renderNav();loadSlide();
+  return files.length;
+}
+function resetOrder(folder){
+  if(!orderStore[folder])return false;
+  delete orderStore[folder];saveOrder();
+  DATA=buildData();renderNav();loadSlide();
+  return true;
+}
 function moveSlideRel(folder,index,delta){
   const s=(DATA[folder]||[])[index];if(!s)return;
   const tgt=folderNames[folderNames.indexOf(folder)+delta];
@@ -741,8 +891,9 @@ function renderNav(){
             folder===curFolder&&selectedIdx.has(i)?'selected':'',
             st.excluded?'excluded':''
           ].join(' ');
-          const state=`${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':''}`;
-          return `<button class="slideItem ${cls}" draggable="true" data-folder="${esc(folder)}" data-index="${i}" data-file="${esc(s.file)}">
+          const state=`${isDeck(s.file)?'<span class="badge deck">자료</span>':''}${st.done?'<span class="badge done">완료</span>':''}${st.excluded?'<span class="badge excluded">제외</span>':''}`;
+          const deck=isDeck(s.file);
+          return `<button class="slideItem ${cls} ${deck?'deckItem':''}" draggable="${deck?'false':'true'}" data-folder="${esc(folder)}" data-index="${i}" data-file="${esc(s.file)}" data-deck="${deck?'1':''}">
             <img class="thumb" src="${esc(s.file)}" alt="">
             <span class="name">${esc(s.name)}</span>
             <span class="state">${state}</span>
@@ -798,15 +949,77 @@ function renderNav(){
     e.preventDefault();
     openCtxMenu(e.clientX,e.clientY,btn.dataset.folder,+btn.dataset.index);
   }));
-  // 드래그로 앞뒤 화자 폴더에 옮기기
+  // 드래그로 다른 화자 폴더에 옮기기 — 잡은 사진 **이후 전부**가 함께 간다(Alt 는 한 장만).
   root.querySelectorAll('.slideItem').forEach(btn=>{
-    btn.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',btn.dataset.file);e.dataTransfer.effectAllowed='move';btn.classList.add('dragging');});
-    btn.addEventListener('dragend',()=>btn.classList.remove('dragging'));
+    btn.addEventListener('dragstart',e=>{
+      if(btn.dataset.deck){e.preventDefault();return;}   // 발표자료는 위치 고정
+      e.dataTransfer.setData('text/plain',btn.dataset.file);
+      e.dataTransfer.effectAllowed='move';
+      btn.classList.add('dragging');
+      dragFile=btn.dataset.file;
+      const {files}=slidesFromHere(dragFile);
+      dragCount=files.length;
+      // 함께 갈 사진들을 목록에서 미리 표시해 준다
+      const arr=new Set(files);
+      root.querySelectorAll('.slideItem').forEach(el=>{
+        if(el!==btn&&arr.has(el.dataset.file))el.classList.add('dragFollow');
+      });
+    });
+    btn.addEventListener('dragend',()=>{
+      btn.classList.remove('dragging');
+      dragFile=null;dragCount=0;
+      root.querySelectorAll('.dragFollow').forEach(el=>el.classList.remove('dragFollow'));
+      root.querySelectorAll('.folder').forEach(el=>{el.classList.remove('dragover');el.removeAttribute('data-drop-hint');});
+    });
+  });
+  // 항목 위에 떨구면 **같은 폴더 안 순서 바꾸기**(자료 사이에 사진 끼워넣기).
+  // 항목의 위쪽 절반이면 그 앞, 아래쪽 절반이면 그 뒤에 넣는다.
+  root.querySelectorAll('.slideItem').forEach(item=>{
+    item.addEventListener('dragover',e=>{
+      if(!dragFile)return;
+      const sameFolder=item.dataset.folder===slidesFromHere(dragFile).folder;
+      if(!sameFolder)return;                       // 다른 폴더면 폴더 드롭(이동)으로 넘긴다
+      e.preventDefault();e.stopPropagation();
+      e.dataTransfer.dropEffect='move';
+      const r=item.getBoundingClientRect();
+      const before=(e.clientY-r.top)<r.height/2;
+      item.classList.toggle('dropBefore',before);
+      item.classList.toggle('dropAfter',!before);
+      item.closest('.folder').classList.remove('dragover');
+      item.closest('.folder').removeAttribute('data-drop-hint');
+    });
+    item.addEventListener('dragleave',()=>item.classList.remove('dropBefore','dropAfter'));
+    item.addEventListener('drop',e=>{
+      const before=item.classList.contains('dropBefore');
+      item.classList.remove('dropBefore','dropAfter');
+      if(!dragFile)return;
+      const info=slidesFromHere(dragFile);
+      if(item.dataset.folder!==info.folder)return;   // 폴더 드롭 핸들러가 처리
+      e.preventDefault();e.stopPropagation();
+      const files=e.altKey?[dragFile]:info.files;
+      const n=reorderWithin(info.folder,files,item.dataset.file,before);
+      if(n)toast(`${n}장을 «${item.dataset.file.split('/').pop()}» ${before?'앞':'뒤'}으로 옮겼습니다`);
+    });
   });
   root.querySelectorAll('.folder').forEach(box=>{
-    box.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';box.classList.add('dragover');});
-    box.addEventListener('dragleave',()=>box.classList.remove('dragover'));
-    box.addEventListener('drop',e=>{e.preventDefault();box.classList.remove('dragover');const file=e.dataTransfer.getData('text/plain');if(file&&box.dataset.folder)moveSlideToFolder(file,box.dataset.folder);});
+    box.addEventListener('dragover',e=>{
+      if(!dragFile)return;
+      if(box.dataset.folder===slidesFromHere(dragFile).folder)return;  // 같은 폴더는 순서 바꾸기
+      e.preventDefault();e.dataTransfer.dropEffect='move';box.classList.add('dragover');
+      const n=e.altKey?1:dragCount;
+      if(n)box.setAttribute('data-drop-hint',`여기로 ${n}장 이동`);
+    });
+    box.addEventListener('dragleave',()=>{box.classList.remove('dragover');box.removeAttribute('data-drop-hint');});
+    box.addEventListener('drop',e=>{
+      box.classList.remove('dragover');box.removeAttribute('data-drop-hint');
+      const file=e.dataTransfer.getData('text/plain');
+      const tgt=box.dataset.folder;
+      if(!file||!tgt)return;
+      if(tgt===slidesFromHere(file).folder)return;
+      e.preventDefault();
+      const n=e.altKey?(moveSlideToFolder(file,tgt),1):moveSlideAndAfterToFolder(file,tgt);
+      if(n>1)toast(`${n}장을 «${tgt}» 로 옮겼습니다 (되돌리려면 첫 장을 원래 그룹으로 다시 끌어놓으세요)`);
+    });
   });
   updateBulkRotateUi();   // 일괄 회전 버튼은 이 innerHTML 재렌더 범위 밖이라 따로 갱신한다
 }
@@ -826,7 +1039,17 @@ function loadSlide(){
   document.getElementById('title').textContent=slide.name;
   const time=[slide.start_hhmmss,slide.end_hhmmss].filter(Boolean).join(' - ');
   document.getElementById('subTitle').textContent=`${curFolder} · ${curIndex+1} / ${DATA[curFolder].length}${time?' · '+time:''}`;
+  const deck=isDeck(slide.file);
+  document.body.classList.toggle('deckmode',deck);
   updateStatusUi();
+  if(deck){
+    // 발표자료는 편집 대상이 아니다 — 화면 중앙에 페이지만 크게 보여준다.
+    if(colorMode)toggleColorMode();
+    const di=document.getElementById('deckImg');
+    di.src=slide.file;di.alt=slide.name;
+    document.getElementById('deckTitle').textContent=`발표자료 ${slide.name.replace(/^DECK\d*_p/,'')}쪽`.replace('.jpg','');
+    return;
+  }
   updateRatioButtons();
   refreshColorUi();
   const img=document.getElementById('sourceImg');
