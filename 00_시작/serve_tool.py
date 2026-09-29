@@ -716,6 +716,24 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
     def _endpoint(self) -> str:
         return urllib.parse.urlsplit(self.path).path
 
+    # 정적 응답의 캐시: 작업 중에 바뀌는 텍스트 파일(사진 목록 data.js, 도구 화면·스크립트, json)은
+    # 브라우저가 저장해 두지 못하게 한다. 캐시된 옛 data.js 때문에 새 행사를 시작한 뒤 새로고침해도
+    # 옛 발표가 보이는 문제를 막는다. (API 응답은 각자 Cache-Control 을 이미 보낸다.)
+    _NO_STORE_SUFFIXES = (".js", ".html", ".htm", ".json")
+
+    def send_header(self, keyword: str, value: str) -> None:
+        if keyword.lower() == "cache-control":
+            self._cache_control_sent = True
+        super().send_header(keyword, value)
+
+    def end_headers(self) -> None:
+        if not getattr(self, "_cache_control_sent", False):
+            path = urllib.parse.unquote(self._endpoint()).lower()
+            if path.endswith("/") or path.endswith(self._NO_STORE_SUFFIXES):
+                super().send_header("Cache-Control", "no-store")
+        self._cache_control_sent = False
+        super().end_headers()
+
     def _no_content(self) -> None:
         self.send_response(http.HTTPStatus.NO_CONTENT)
         self.send_header("Cache-Control", "no-store")

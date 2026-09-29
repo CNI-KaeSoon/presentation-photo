@@ -194,6 +194,30 @@ def main() -> int:
                 require_exit(grace_process, GRACE + 4)
 
             results.append(report("T5 첫 핑 없이 grace 초과 종료", test_startup_grace))
+
+            def test_no_store_cache() -> None:
+                # 바뀌는 텍스트 파일(data.js·index.html·목록 디렉터리)은 no-store, 사진은 기본 캐시 정책을 그대로 둔다.
+                (slide_tool / "data.js").write_text("window.SLIDE_DATA={};", encoding="utf-8")
+                (slide_tool / "photo.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+                process = None
+                try:
+                    process, base_url = start_server(root, processes)
+                    for path in ("/slide_tool/data.js", "/slide_tool/index.html", "/slide_tool/heartbeat.js", "/slide_tool/"):
+                        status, headers, _ = request(f"{base_url}{path}")
+                        assert status == 200, f"{path}: HTTP {status}"
+                        assert headers.get("Cache-Control") == "no-store", f"{path}: {headers.get('Cache-Control')!r}"
+                    # 캐시 헤더가 한 번만 나간다(API 응답이 보낸 것과 겹치지 않는다).
+                    status, headers, _ = request(f"{base_url}/heartbeat", method="POST")
+                    assert status == 204, f"heartbeat: HTTP {status}"
+                    assert len(headers.get_all("Cache-Control") or []) == 1, headers.get_all("Cache-Control")
+                    status, headers, _ = request(f"{base_url}/slide_tool/photo.jpg")
+                    assert status == 200, f"photo.jpg: HTTP {status}"
+                    assert headers.get("Cache-Control") is None, headers.get("Cache-Control")
+                finally:
+                    if process is not None:
+                        stop_process(process)
+
+            results.append(report("T6 data.js·화면 파일은 Cache-Control: no-store", test_no_store_cache))
         except Exception as exc:
             print(f"[FAIL] 테스트 환경 준비: {exc}")
             results.append(False)
@@ -201,7 +225,7 @@ def main() -> int:
             for process in processes:
                 stop_process(process)
 
-    if all(results) and len(results) == 5:
+    if all(results) and len(results) == 6:
         print("SERVE: ALL PASS")
         return 0
     print("SERVE: FAIL")

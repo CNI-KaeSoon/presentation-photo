@@ -1,9 +1,11 @@
 (function () {
   'use strict';
 
+  // 화면 배치: 헤더 단계·다음 할 일·⋯ 메뉴, 보정 화면, 시작 화면은 index.html 이 그린다.
+  // 이 파일은 서버 연결(사진 넣기·준비·PDF·새 행사)과 그 작업을 보여 주는 단계 패널(오른쪽 서랍)·알림 띠를 맡는다.
   var TOKEN = null;
   var POLL_MS = 700;
-  var COLLAPSE_KEY = 'wfPanelCollapsed_v1';
+  var COLLAPSE_KEY = 'wfPanelCollapsed_v1';   // 옛 버전이 쓰던 키 — 새 행사 시작이 지운다
   // 이 출처(주소·포트)가 이미 이 작업을 본 적이 있다는 표시 — 있으면 "저장된 보정값 없음" 안내 띠를 다시 띄우지 않는다.
   var ORIGIN_SEEN_KEY = 'wfOriginSeen_v1';
   var NEW_EVENT_TOAST_KEY = 'wfNewEventToast_v1';
@@ -18,10 +20,7 @@
     pollTimer: null,
     activeKind: null,
     cancelling: false,
-    collapsed: false,
-    collapseReady: false,
-    expandedStep: null,
-    manualStep: false,
+    drawerStep: null,     // 열려 있는 단계 패널: 0(① 사진 넣기) · 1(② 준비) · 3(④ PDF) · null(닫힘)
     exportMode: 'per-folder',
     exportOrder: [],
     draggedGroup: null,
@@ -32,6 +31,7 @@
     dndBound: false
   };
   var ui = {};
+  var STEP_TITLES = {0: '① 사진 넣기', 1: '② 준비', 3: '④ PDF'};
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -169,41 +169,19 @@
     if (!ui.orderBox.hidden) renderOrderList();
   }
 
-  function attachCorrectionEditor() {
-    var content = ui.accordions && ui.accordions[2] && ui.accordions[2].content;
-    if (!content) return;
-    if (ui.correctionEmpty && !content.contains(ui.correctionEmpty)) content.appendChild(ui.correctionEmpty);
-    if (ui.correctionEditor && !content.contains(ui.correctionEditor)) content.appendChild(ui.correctionEditor);
-  }
-
-  function restoreCorrectionEditor() {
-    if (ui.emptyAnchor && ui.emptyAnchor.parentNode && ui.correctionEmpty &&
-        ui.correctionEmpty.parentNode !== ui.emptyAnchor.parentNode) {
-      ui.emptyAnchor.parentNode.insertBefore(ui.correctionEmpty, ui.emptyAnchor.nextSibling);
-    }
-    if (ui.editorAnchor && ui.editorAnchor.parentNode && ui.correctionEditor &&
-        ui.correctionEditor.parentNode !== ui.editorAnchor.parentNode) {
-      ui.editorAnchor.parentNode.insertBefore(ui.correctionEditor, ui.editorAnchor.nextSibling);
-    }
-  }
-
   function injectStyle() {
     if (document.getElementById('wfStyle')) return;
     var style = el('style', {id: 'wfStyle'});
     style.textContent = [
-      '#wfPanel{margin-top:0}',
-      '.wfHead{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s2);flex-wrap:wrap}',
-      '.wfTitle{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}',
-      '.wfTitle h2{font-size:var(--f3);font-weight:800}',
-      '.wfSummary{font-size:var(--f1);color:var(--muted);margin-top:var(--s1)}',
-      '.wfBody{margin-top:var(--s2);border-top:1px solid var(--border)}',
-      '#wfPanel.wfCollapsed .wfBody{display:none}',
-      '.wfAccordion{border-bottom:1px solid var(--border)}',
-      '.wfAccordionHead{display:flex;align-items:center;justify-content:space-between;gap:var(--s2);padding:var(--s2) 0}',
-      '.wfAccordionToggle{min-width:62px}',
-      '.wfRow{display:grid;grid-template-columns:minmax(120px,.28fr) minmax(280px,1fr);gap:var(--s2);padding:0 0 var(--s3)}',
-      '.wfRow h3{font-size:var(--f2);font-weight:700;margin:0 0 var(--s1)}',
-      '.wfRowInfo{font-size:var(--f1);color:var(--muted)}',
+      /* 단계 패널(오른쪽 서랍): 헤더의 ①②④ 를 누르면 열린다. 보정 화면 위에 겹쳐 뜨므로 보정 화면 배치는 그대로다. */
+      '#wfDrawer{position:fixed;top:var(--hdr-h);right:0;bottom:0;z-index:70;width:min(var(--drawer-w),100vw);display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-modal);transform:translateX(104%);visibility:hidden;transition:transform .2s,visibility 0s .2s}',
+      '#wfDrawer.open{transform:none;visibility:visible;transition:transform .2s,visibility 0s}',
+      '.wfDrawerHead{flex:none;display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s2);padding:var(--s3) var(--s3) var(--s2)}',
+      '.wfDrawerHead h2{font-size:var(--f3);font-weight:800}',
+      '.wfSummary{font-size:var(--f1);color:var(--muted);margin-top:2px}',
+      '.wfDrawerTabs{flex:none;padding:0 var(--s3) var(--s2)}',
+      '.wfDrawerBody{flex:1;min-height:0;overflow:auto;padding:0 var(--s3) var(--s3);border-top:1px solid var(--border)}',
+      '.wfStepInfo{font-size:var(--f1);color:var(--muted);margin:var(--s2) 0}',
       '.wfDrop{display:flex;flex-direction:column;align-items:center;gap:var(--s1);border:2px dashed var(--border-strong);border-radius:var(--r3);background:var(--surface);padding:var(--s3);text-align:center;cursor:pointer;transition:.15s}',
       '.wfDrop:hover,.wfDrop.dragover{border-color:var(--primary);background:var(--primary-soft)}',
       '.wfDrop[aria-disabled=true]{opacity:.5;cursor:not-allowed}',
@@ -230,14 +208,13 @@
       '.wfOrderHandle{display:inline-grid;place-items:center;color:var(--muted);cursor:grab;user-select:none}',
       '.wfOrderHandle:active{cursor:grabbing}',
       '.wfNoteText{white-space:pre-wrap}',
-      '.wfNoteActions{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap;margin-top:var(--s1)}',
-      '.wfHeadActions{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap}',
+      '.wfNoteActions{display:flex;align-items:center;gap:var(--s1);flex-wrap:wrap}',
       '.wfWhy{font-size:var(--f1);color:var(--warn)}',
       '.wfWhy:empty{display:none}',
-      '#wfLocalBand{margin:0 0 var(--s2)}',
       '.wfNeOption{display:flex;align-items:flex-start;gap:var(--s1);margin-top:var(--s2)}',
       '.wfNeOption input{margin-top:3px}',
-      '.wfProgress{display:none;margin-top:var(--s2);padding:var(--s2);border:1px solid var(--border);border-radius:var(--r2);background:var(--surface-2)}',
+      '.wfRowInfo{font-size:var(--f1);color:var(--muted)}',
+      '.wfProgress{display:none;margin:var(--s2) 0 0;padding:var(--s2);border:1px solid var(--border);border-radius:var(--r2);background:var(--surface-2)}',
       '.wfProgress.show{display:block}',
       '.wfProgressHead{display:flex;align-items:center;justify-content:space-between;gap:var(--s1);flex-wrap:wrap}',
       '.wfProgressNote{font-size:var(--f1);color:var(--muted)}',
@@ -247,132 +224,137 @@
       '.wfLogAll{margin:var(--s1) 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font);font-size:var(--f1);color:var(--text-2);max-height:260px;overflow:auto}',
       '.wfDetails summary{cursor:pointer;color:var(--primary-text);font-size:var(--f1);margin-top:var(--s1)}',
       '.wfUploadResults{margin-top:var(--s1);white-space:pre-wrap;font-size:var(--f1);color:var(--muted)}',
-      'body.wfCorrectionCollapsed #editor,body.wfCorrectionCollapsed #empty{display:none!important}',
-      '@media(max-width:760px){.wfRow{grid-template-columns:1fr}.wfDrop{padding:var(--s2)}}'
+      '@media(max-width:1024px){#wfDrawer{top:var(--hdr-h)}}'
     ].join('\n');
     document.head.appendChild(style);
   }
 
-  function buildPanel() {
-    var main = document.getElementById('main');
-    if (!main) return false;
+  // 진행 상자(업로드·준비·PDF 진행과 자세한 기록). 단계 패널과 시작 화면이 각각 하나씩 갖는다.
+  function makeProgress() {
+    var box = el('div', {className: 'wfProgress'});
+    var label = el('strong', {text: '대기'});
+    var cancel = el('button', {type: 'button', className: 'btn sm danger', text: '작업 취소'});
+    cancel.addEventListener('click', cancelJob);
+    box.appendChild(el('div', {className: 'wfProgressHead'}, [label, cancel]));
+    var fill = el('div', {className: 'wfBarFill'});
+    box.appendChild(el('div', {className: 'wfBar'}, [fill]));
+    // 명령·절대경로가 섞인 기록은 기본 접힘 — 진행 상황은 위 막대와 이름으로 충분하다. 실패하면 펼친다.
+    var note = el('div', {className: 'wfProgressNote'});
+    box.appendChild(note);
+    var log = el('pre', {className: 'wfLogAll'});
+    var details = el('details', {className: 'wfDetails'}, [el('summary', {text: '자세한 기록'}), log]);
+    box.appendChild(details);
+    return {root: box, label: label, cancel: cancel, fill: fill, note: note, log: log, details: details};
+  }
 
-    ui.panel = el('section', {id: 'wfPanel', className: 'panel', 'aria-label': '작업 순서'});
-    ui.panel.hidden = true;
-    var head = el('div', {className: 'wfHead'});
-    var headLeft = el('div');
-    var title = el('div', {className: 'wfTitle'}, [
-      el('h2', {text: '작업 순서'})
-    ]);
-    ui.summary = el('div', {className: 'wfSummary', text: '서버 연결을 확인하는 중입니다.'});
-    ui.steps = [
-      el('span', {className: 'badge step todo', text: '① 사진 넣기'}),
-      el('span', {className: 'badge step todo', text: '② 사진 준비'}),
-      el('span', {className: 'badge step todo', text: '③ 경계·색보정'}),
-      el('span', {className: 'badge step todo', text: '④ PDF'})
-    ];
-    headLeft.appendChild(title);
-    headLeft.appendChild(ui.summary);
-    ui.collapseBtn = el('button', {type: 'button', className: 'btn sm', text: '접기'});
-    ui.collapseBtn.addEventListener('click', function () {
-      setCollapsed(!state.collapsed, true);
-    });
-    ui.newEventBtn = el('button', {
-      type: 'button',
-      className: 'btn sm danger',
-      text: '새 행사 시작…',
-      title: '지금 작업을 보관 폴더로 옮기고 빈 작업장에서 새로 시작합니다 (삭제하지 않습니다)'
-    });
-    ui.newEventBtn.hidden = true;
-    ui.newEventBtn.addEventListener('click', confirmNewEvent);
-    head.appendChild(headLeft);
-    head.appendChild(el('div', {className: 'wfHeadActions'}, [ui.newEventBtn, ui.collapseBtn]));
-    ui.panel.appendChild(head);
-
-    // 알림 띠 두 개: 배너(작업 결과·오류, 필요하면 버튼 하나)와 알림(상태에서 계산되는 안내 — 원본 변경 등).
-    var banner = buildNote('banner');
-    ui.banner = banner.root;
-    ui.bannerText = banner.text;
-    ui.bannerActions = banner.actions;
-    ui.panel.appendChild(ui.banner);
-    var notice = buildNote('banner');
-    ui.notice = notice.root;
-    ui.noticeText = notice.text;
-    ui.noticeActions = notice.actions;
-    ui.panel.appendChild(ui.notice);
-
-    ui.body = el('div', {className: 'wfBody'});
-    ui.panel.appendChild(ui.body);
-
-    var fileInfo = el('div', {}, [
-      el('h3', {text: '① 사진 넣기'}),
-      el('div', {className: 'wfRowInfo', text: '원본은 보존되며 작업용 사진은 다음 단계에서 만듭니다.'})
-    ]);
-    var fileWork = el('div');
-    ui.drop = el('div', {className: 'wfDrop', role: 'button', tabindex: '0'}, [
+  // 사진 넣기 드롭 영역(단계 패널용). 시작 화면의 큰 드롭 영역은 index.html 에 있고 아래 bindStartView 가 연결한다.
+  function buildDropZone() {
+    var drop = el('div', {className: 'wfDrop', role: 'button', tabindex: '0'}, [
       el('span', {className: 'wfDropIcon'}, [icon('upload')]),
       el('strong', {text: '사진을 여기로 끌어 놓으세요'}),
       el('span', {className: 'wfDropSub', text: 'JPG · PNG · HEIC 등 파일 단위로 올립니다. 사진은 이 컴퓨터 밖으로 나가지 않습니다.'})
     ]);
+    drop.addEventListener('click', pickFiles);
+    drop.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        pickFiles();
+      }
+    });
+    return drop;
+  }
+
+  function buildUi() {
+    var bands = document.getElementById('bands');
+    if (!bands || !document.getElementById('main')) return false;
+
+    // ---- 알림 띠(헤더 바로 아래): 작업 결과·오류(닫을 수 있음) / 상태에서 계산되는 안내 / 이 주소에 저장된 작업 없음 ----
+    var banner = buildNote('banner', true);
+    ui.banner = banner.root;
+    ui.bannerText = banner.text;
+    ui.bannerActions = banner.actions;
+    bands.appendChild(ui.banner);
+    var notice = buildNote('banner');
+    ui.notice = notice.root;
+    ui.noticeText = notice.text;
+    ui.noticeActions = notice.actions;
+    bands.appendChild(ui.notice);
+    buildLocalBand(bands);
+
+    // ---- 파일 입력 하나(드롭 영역이 둘이어도 이것을 함께 쓴다) ----
     ui.fileInput = el('input', {
       type: 'file',
       multiple: 'multiple',
       accept: '.jpg,.jpeg,.png,.heic,.heif,.tif,.tiff,.bmp,.webp'
     });
     ui.fileInput.hidden = true;
-    ui.drop.addEventListener('click', function () { ui.fileInput.click(); });
-    ui.drop.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        ui.fileInput.click();
-      }
-    });
     ui.fileInput.addEventListener('change', function () {
       uploadFiles(ui.fileInput.files);
       ui.fileInput.value = '';
     });
+    document.body.appendChild(ui.fileInput);
+
+    // ---- 단계 패널(오른쪽 서랍) ----
+    ui.drawer = el('aside', {id: 'wfDrawer', 'aria-label': '작업 단계 패널'});
+    ui.drawerTitle = el('h2', {text: ''});
+    ui.summary = el('div', {className: 'wfSummary', text: '서버 연결을 확인하는 중입니다.'});
+    ui.drawerClose = el('button', {type: 'button', className: 'btn ghost sm icon', 'aria-label': '패널 닫기', title: '패널 닫기 (Esc)'}, [icon('x')]);
+    ui.drawerClose.addEventListener('click', closeDrawer);
+    ui.drawer.appendChild(el('div', {className: 'wfDrawerHead'}, [el('div', {}, [ui.drawerTitle, ui.summary]), ui.drawerClose]));
+    ui.tabs = {};
+    var tabSeg = el('div', {className: 'seg sm', role: 'tablist', 'aria-label': '단계'});
+    [0, 1, 3].forEach(function (step) {
+      var tab = el('button', {type: 'button', role: 'tab', 'aria-selected': 'false', text: STEP_TITLES[step]});
+      tab.addEventListener('click', function () { openStep(step); });
+      ui.tabs[step] = tab;
+      tabSeg.appendChild(tab);
+    });
+    ui.drawer.appendChild(el('div', {className: 'wfDrawerTabs'}, [tabSeg]));
+    ui.drawerBody = el('div', {className: 'wfDrawerBody'});
+    ui.drawer.appendChild(ui.drawerBody);
+
+    ui.progresses = [makeProgress()];
+    ui.drawerBody.appendChild(ui.progresses[0].root);
+
+    // ① 사진 넣기
+    var filePane = el('div', {'data-step': '0'});
+    filePane.appendChild(el('div', {className: 'wfStepInfo', text: '원본은 보존되며 작업용 사진은 다음 단계에서 만듭니다.'}));
+    ui.drop = buildDropZone();
     ui.openSrcBtn = el('button', {type: 'button', className: 'btn'}, [icon('folder'), '사진 폴더 열기']);
     ui.openSrcBtn.addEventListener('click', function () { openFolder('src'); });
     ui.srcCount = el('span', {className: 'wfCounts', text: '현재 원본 0장'});
-    fileWork.appendChild(ui.drop);
-    fileWork.appendChild(ui.fileInput);
-    fileWork.appendChild(el('div', {className: 'wfControls'}, [
+    filePane.appendChild(ui.drop);
+    filePane.appendChild(el('div', {className: 'wfControls'}, [
       ui.openSrcBtn,
       el('span', {className: 'muted', text: '대용량·폴더 단위 복사는 이 버튼으로 폴더를 연 뒤 넣으세요.'})
     ]));
-    fileWork.appendChild(ui.srcCount);
+    filePane.appendChild(ui.srcCount);
     ui.uploadResults = el('div', {className: 'wfUploadResults'});
-    fileWork.appendChild(ui.uploadResults);
-    var fileRow = el('div', {className: 'wfRow'}, [fileInfo, fileWork]);
+    filePane.appendChild(ui.uploadResults);
 
-    var prepareInfo = el('div', {}, [
-      el('h3', {text: '② 사진 준비'}),
-      el('div', {className: 'wfRowInfo', text: '촬영 간격이 “발표 간격”보다 크게 벌어진 곳에서 발표를 나누고, 이어서 작업용 사진과 목록을 만듭니다.'})
-    ]);
-    var prepareWork = el('div');
+    // ② 준비
+    var preparePane = el('div', {'data-step': '1'});
+    preparePane.appendChild(el('div', {className: 'wfStepInfo', text: '촬영 간격이 “발표 간격”보다 크게 벌어진 곳에서 발표를 나누고, 이어서 작업용 사진과 목록을 만듭니다.'}));
     ui.gap = el('input', {type: 'number', min: '1', max: '600', value: '20', inputmode: 'numeric'});
     ui.prepareBtn = el('button', {type: 'button', className: 'btn primary', text: '사진 준비 실행'});
     ui.regroupBtn = el('button', {type: 'button', className: 'btn danger', text: '다시 나누기…'});
     ui.prepareBtn.addEventListener('click', function () { runPrepare(false); });
     ui.regroupBtn.addEventListener('click', confirmRegroup);
     ui.prepareWhy = el('span', {className: 'wfWhy'});
-    prepareWork.appendChild(el('div', {className: 'wfControls'}, [
+    preparePane.appendChild(el('div', {className: 'wfControls'}, [
       el('label', {}, [document.createTextNode('발표 간격(분)'), ui.gap]),
       ui.prepareBtn,
-      ui.regroupBtn,
-      ui.prepareWhy
+      ui.regroupBtn
     ]));
+    preparePane.appendChild(ui.prepareWhy);
     ui.groupInfo = el('div', {className: 'wfCounts', text: '나눈 발표 없음'});
     ui.envInfo = el('div', {className: 'wfEnv', text: '환경 상태 확인 중'});
-    prepareWork.appendChild(ui.groupInfo);
-    prepareWork.appendChild(ui.envInfo);
-    var prepareRow = el('div', {className: 'wfRow'}, [prepareInfo, prepareWork]);
+    preparePane.appendChild(ui.groupInfo);
+    preparePane.appendChild(ui.envInfo);
 
-    var exportInfo = el('div', {}, [
-      el('h3', {text: '④ PDF 만들기'}),
-      el('div', {className: 'wfRowInfo', text: '현재 경계·색보정 값을 원본 사진에 적용해 고해상도 PDF를 만듭니다.'})
-    ]);
-    var exportWork = el('div');
+    // ④ PDF
+    var exportPane = el('div', {'data-step': '3'});
+    exportPane.appendChild(el('div', {className: 'wfStepInfo', text: '현재 경계·색보정 값을 원본 사진에 적용해 고해상도 PDF를 만듭니다.'}));
     ui.onlyDone = el('input', {type: 'checkbox'});
     ui.exportModeRadios = {};
     ui.exportModes = el('div', {className: 'wfExportModes'});
@@ -401,87 +383,92 @@
     ui.openOutBtn = el('button', {type: 'button', className: 'btn'}, [icon('folder'), '결과 폴더 열기']);
     ui.exportBtn.addEventListener('click', runExportPdf);
     ui.openOutBtn.addEventListener('click', function () { openFolder('out'); });
-    exportWork.appendChild(ui.exportModes);
-    exportWork.appendChild(ui.orderBox);
+    exportPane.appendChild(ui.exportModes);
+    exportPane.appendChild(ui.orderBox);
     ui.exportWhy = el('span', {className: 'wfWhy'});
-    exportWork.appendChild(el('div', {className: 'wfControls'}, [
+    exportPane.appendChild(el('div', {className: 'wfControls'}, [
       ui.exportBtn,
       el('label', {}, [ui.onlyDone, document.createTextNode('완료본만')]),
-      ui.openOutBtn,
-      ui.exportWhy
+      ui.openOutBtn
     ]));
+    exportPane.appendChild(ui.exportWhy);
     ui.resultInfo = el('div', {className: 'wfCounts', text: '현재 PDF 0개'});
-    exportWork.appendChild(ui.resultInfo);
-    exportWork.appendChild(el('div', {
+    exportPane.appendChild(ui.resultInfo);
+    exportPane.appendChild(el('div', {
       className: 'wfEnv',
-      text: '“백업 내보내기”로 보정값을 파일로 따로 보관할 수도 있습니다.'
+      text: '보정값은 헤더의 ⋯ 메뉴 “백업 내보내기”로 파일에 따로 보관할 수도 있습니다.'
     }));
-    var exportRow = el('div', {className: 'wfRow'}, [exportInfo, exportWork]);
 
-    var correctionEmpty = document.getElementById('empty');
-    var correctionEditor = document.getElementById('editor');
-    var correctionSlot = document.createComment('correction-editor-slot');
-    if (correctionEmpty && correctionEmpty.parentNode) {
-      ui.emptyAnchor = document.createComment('correction-empty-anchor');
-      correctionEmpty.parentNode.insertBefore(ui.emptyAnchor, correctionEmpty);
-    }
-    if (correctionEditor && correctionEditor.parentNode) {
-      ui.editorAnchor = document.createComment('correction-editor-anchor');
-      correctionEditor.parentNode.insertBefore(ui.editorAnchor, correctionEditor);
-    }
-    ui.correctionEmpty = correctionEmpty;
-    ui.correctionEditor = correctionEditor;
-
-    ui.accordions = [];
-    [fileRow, prepareRow, correctionSlot, exportRow].forEach(function (content, index) {
-      var section = el('section', {className: 'wfAccordion', 'data-step': String(index + 1)});
-      var toggle = el('button', {
-        type: 'button',
-        className: 'btn sm ghost wfAccordionToggle',
-        text: '펼치기',
-        'aria-expanded': 'false'
-      });
-      toggle.addEventListener('click', function () { setExpandedStep(index, true); });
-      section.appendChild(el('div', {className: 'wfAccordionHead'}, [ui.steps[index], toggle]));
-      var contentBox = null;
-      if (content) {
-        contentBox = el('div', {className: 'wfAccordionContent'}, [content]);
-        contentBox.hidden = true;
-        section.appendChild(contentBox);
-      }
-      ui.accordions.push({section: section, content: contentBox, toggle: toggle});
-      ui.body.appendChild(section);
+    ui.panes = {0: filePane, 1: preparePane, 3: exportPane};
+    [0, 1, 3].forEach(function (step) {
+      ui.panes[step].hidden = true;
+      ui.drawerBody.appendChild(ui.panes[step]);
     });
+    document.body.appendChild(ui.drawer);
 
-    ui.progress = el('div', {className: 'wfProgress'});
-    ui.progressLabel = el('strong', {text: '대기'});
-    ui.cancelBtn = el('button', {type: 'button', className: 'btn sm danger', text: '작업 취소'});
-    ui.cancelBtn.addEventListener('click', cancelJob);
-    ui.progress.appendChild(el('div', {className: 'wfProgressHead'}, [ui.progressLabel, ui.cancelBtn]));
-    ui.barFill = el('div', {className: 'wfBarFill'});
-    ui.progress.appendChild(el('div', {className: 'wfBar'}, [ui.barFill]));
-    // 명령·절대경로가 섞인 기록은 기본 접힘 — 진행 상황은 위 막대와 이름으로 충분하다. 실패하면 펼친다.
-    ui.progressNote = el('div', {className: 'wfProgressNote'});
-    ui.progress.appendChild(ui.progressNote);
-    ui.logAll = el('pre', {className: 'wfLogAll'});
-    ui.details = el('details', {className: 'wfDetails'}, [
-      el('summary', {text: '자세한 기록'}),
-      ui.logAll
-    ]);
-    ui.progress.appendChild(ui.details);
-    ui.body.appendChild(ui.progress);
-
-    main.prepend(ui.panel);
-    buildLocalBand(main);
+    bindStartView();
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape' || state.drawerStep === null) return;
+      if (typeof modalOpen === 'function' && modalOpen()) return;
+      if (document.getElementById('popMenu')) return;
+      closeDrawer();
+    });
     return true;
   }
 
-  // 글 한 덩어리 + 버튼 줄로 된 알림 띠 뼈대.
-  function buildNote(className) {
+  // 시작 화면(index.html 의 #startView)의 요소를 서버 동작에 연결한다.
+  function bindStartView() {
+    ui.startDrop = document.getElementById('startDrop');
+    ui.startOpenSrc = document.getElementById('startOpenSrcBtn');
+    ui.startWhy = document.getElementById('startWhy');
+    ui.startResume = document.getElementById('startResume');
+    ui.startResumeMeta = document.getElementById('startResumeMeta');
+    ui.startResumeBtn = document.getElementById('startResumeBtn');
+    ui.startNewEventBtn = document.getElementById('startNewEventBtn');
+    ui.startUploadResults = document.getElementById('startUploadResults');
+    ui.startProgress = makeProgress();
+    var slot = document.getElementById('startProgressSlot');
+    if (slot) slot.appendChild(ui.startProgress.root);
+    ui.progresses.push(ui.startProgress);
+    ui.drops = [ui.drop];
+    if (ui.startDrop) {
+      ui.drops.push(ui.startDrop);
+      ui.startDrop.addEventListener('click', pickFiles);
+      ui.startDrop.addEventListener('keydown', function (event) {
+        if (event.target !== ui.startDrop) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          pickFiles();
+        }
+      });
+    }
+    if (ui.startOpenSrc) {
+      ui.startOpenSrc.addEventListener('click', function (event) {
+        event.stopPropagation();
+        openFolder('src');
+      });
+    }
+    if (ui.startResumeBtn) ui.startResumeBtn.addEventListener('click', function () { runPrepare(false); });
+    if (ui.startNewEventBtn) ui.startNewEventBtn.addEventListener('click', confirmNewEvent);
+  }
+
+  function setUploadResults(text) {
+    setText(ui.uploadResults, text);
+    setText(ui.startUploadResults, text);
+  }
+
+  // 글 한 덩어리 + 버튼 줄로 된 알림 띠 뼈대. dismissible 이면 오른쪽에 닫기(✕)가 붙는다.
+  function buildNote(className, dismissible) {
     var text = el('div', {className: 'wfNoteText'});
     var actions = el('div', {className: 'wfNoteActions'});
     actions.hidden = true;
-    var root = el('div', {className: className, role: 'status'}, [text, actions]);
+    var children = [text, actions];
+    var root = el('div', {className: className, role: 'status'}, children);
+    if (dismissible) {
+      var close = el('button', {type: 'button', className: 'btn ghost sm icon', 'aria-label': '알림 닫기', title: '알림 닫기'}, [icon('x')]);
+      close.addEventListener('click', function () { root.hidden = true; });
+      root.appendChild(close);
+    }
     root.hidden = true;
     return {root: root, text: text, actions: actions};
   }
@@ -627,17 +614,13 @@
     return api('/api/status').then(function (payload) {
       if (payload.workflow === false) {
         state.disabled = true;
-        ui.panel.hidden = true;
-        restoreCorrectionEditor();
-        document.body.classList.remove('wfCorrectionCollapsed');
+        closeDrawer();
         notifyState();
         return null;
       }
       state.status = payload;
       state.disabled = false;
       state.offline = false;
-      attachCorrectionEditor();
-      ui.panel.hidden = false;
       renderPanel(payload);
       notifyState();
       if (payload.job && payload.job.state === 'running' && !state.pollTimer) {
@@ -652,9 +635,7 @@
     }).catch(function (error) {
       if (unavailable(error)) {
         state.disabled = true;
-        ui.panel.hidden = true;
-        restoreCorrectionEditor();
-        document.body.classList.remove('wfCorrectionCollapsed');
+        closeDrawer();
         notifyState();
         return null;
       }
@@ -668,28 +649,45 @@
     });
   }
 
-  function stepClasses(status) {
-    var hasPhotos = Number(status.srcCount || 0) > 0;
-    var prepared = !!status.dataJs && Array.isArray(status.groups) && status.groups.length > 0;
-    var hasResults = Number(status.resultCount || 0) > 0;
-    return [
-      hasPhotos ? 'done' : 'active',
-      prepared ? 'done' : (hasPhotos ? 'active' : ''),
-      prepared ? (hasResults ? 'done' : 'active') : '',
-      hasResults ? 'done' : (prepared ? 'active' : '')
-    ];
+  // 헤더(단계 표시·다음 할 일)가 읽어 가는 서버 쪽 상태 요약. 서버 상태를 아직 모르면 null.
+  function summary() {
+    var status = state.status;
+    if (!status && !state.disabled && !state.offline) return null;
+    status = status || {};
+    var groups = Array.isArray(status.groups) ? status.groups : [];
+    var result = {
+      disabled: state.disabled,
+      offline: state.offline,
+      busy: false,
+      busyText: '',
+      busyStep: null,
+      src: Number(status.srcCount || 0),
+      groups: groups.length,
+      prepared: !!status.dataJs && groups.length > 0,
+      worktree: !!status.worktree,
+      results: Number(status.resultCount || 0),
+      envOk: !!(status.env && status.env.ok),
+      whyPrepare: state.status ? whyDisabled('prepare', false) : '',
+      whyExport: state.status ? whyDisabled('export', false) : '',
+      openStep: state.drawerStep
+    };
+    var job = state.job;
+    if (state.uploading) {
+      result.busy = true;
+      result.busyStep = 0;
+      result.busyText = '사진을 올리는 중 · ' + (state.uploadLabel || '').replace(/^업로드 /, '');
+    } else if (job && job.state === 'running') {
+      var total = Number(job.phaseTotal || 0);
+      result.busy = true;
+      result.busyStep = job.kind === 'export' ? 3 : 1;
+      result.busyText = (job.kind === 'export' ? 'PDF 만드는 중' : '사진 준비 중') +
+        (total ? ' · 단계 ' + Number(job.phase || 0) + '/' + total : '');
+    }
+    return result;
   }
 
   function renderPanel(status) {
     var running = isBusy() || state.uploading || !!(status.job && status.job.state === 'running');
-    var classes = stepClasses(status);
-    // 단계 배지: 끝남 = 완료(초록) · 지금 할 차례 = 자동(파랑) · 아직 = 미작업(점선)
-    ui.steps.forEach(function (node, index) {
-      var kind = classes[index] === 'done' ? 'done' : (classes[index] === 'active' ? 'auto' : 'todo');
-      node.className = 'badge step ' + kind;
-      if (kind === 'auto') node.setAttribute('aria-current', 'step');
-      else node.removeAttribute('aria-current');
-    });
     setText(ui.summary,
       '원본 ' + Number(status.srcCount || 0) + '장 · 발표 ' +
       (Array.isArray(status.groups) ? status.groups.length : 0) + '개 · PDF ' +
@@ -715,23 +713,28 @@
     setText(ui.resultInfo, '현재 PDF ' + Number(status.resultCount || 0) + '개');
     setText(ui.prepareBtn, status.worktree ? '그대로 준비' : '사진 준비 실행');
     ui.regroupBtn.hidden = !status.worktree;
-    ui.newEventBtn.hidden = !hasArchivableWork(status);
 
-    if (!state.collapseReady) {
-      var saved = null;
-      try { saved = localStorage.getItem(COLLAPSE_KEY); } catch (_error) { saved = null; }
-      if (saved === null) {
-        state.collapsed = false;
-      }
-      else state.collapsed = saved === '1';
-      state.collapseReady = true;
-      setCollapsed(state.collapsed, false);
+    // 시작 화면: 원본을 넣었거나 발표 계획이 있으면 "이어서 하기" 카드를 보여 준다
+    var src = Number(status.srcCount || 0);
+    if (ui.startResume) {
+      ui.startResume.hidden = !(src > 0 || status.worktree);
+      setText(ui.startResumeMeta,
+        '원본 사진 ' + src + '장이 들어 있습니다' + (status.worktree ? ' · 발표 나누기 계획이 있습니다' : ''));
+      setText(ui.startResumeBtn && ui.startResumeBtn.firstChild, status.worktree ? '그대로 준비 ' : '사진 준비 ');
     }
-    if (!state.manualStep) setExpandedStep(automaticStep(status), false);
+
     setControlsDisabled(running || state.disabled);
     renderNotice(status);
     maybeShowLocalBand(status);
     renderProgress();
+  }
+
+  function newEventAvailability() {
+    if (state.disabled) return {enabled: false, reason: '시작 파일로 연 도구 서버에서만 쓸 수 있습니다.'};
+    if (!state.status) return {enabled: false, reason: '도구 서버 연결을 확인하는 중입니다.'};
+    if (isBusy() || state.uploading) return {enabled: false, reason: '실행 중인 작업이 끝난 뒤 쓰세요.'};
+    if (!hasArchivableWork(state.status)) return {enabled: false, reason: '보관할 작업이 없습니다.'};
+    return {enabled: true, reason: ''};
   }
 
   function photoTotal(status) {
@@ -796,15 +799,16 @@
     var envOk = !!(status.env && status.env.ok);
     var groups = Array.isArray(status.groups) ? status.groups : [];
     if (state.offline) return '서버에 연결되지 않았습니다 — [다시 연결]을 누르세요.';
+    if (state.disabled) return '시작 파일로 연 도구 서버에서만 쓸 수 있습니다.';
     if (force) return state.uploading ? '사진을 올리는 중입니다 — 끝난 뒤 누르세요.' : '작업이 실행 중입니다 — 끝난 뒤 누르세요.';
     if (kind === 'export') {
-      if (!status.dataJs || !groups.length) return '준비된 사진이 없습니다 — ② 사진 준비를 먼저 하세요.';
-      if (!hasPhotos) return '원본 사진이 없어 PDF를 만들 수 없습니다 — ① 에서 원본을 다시 넣으세요.';
+      if (!status.dataJs || !groups.length) return '준비된 사진이 없습니다 — ② 준비를 먼저 하세요.';
+      if (!hasPhotos) return '원본 사진이 없어 PDF를 만들 수 없습니다 — ① 사진 넣기에서 원본을 다시 넣으세요.';
     } else if (!hasPhotos) {
-      return '원본 사진이 없습니다 — ① 에서 사진을 넣으세요.';
+      return '원본 사진이 없습니다 — ① 사진 넣기에서 사진을 넣으세요.';
     }
     if (!envOk) return '환경이 준비되지 않았습니다 — 시작 파일(시작하기)을 다시 실행하세요.';
-    if (kind === 'prepare' && planDiff(status)) return '원본이 계획과 달라 그대로 준비할 수 없습니다 — 위 안내에서 고르세요.';
+    if (kind === 'prepare' && planDiff(status)) return '원본이 계획과 달라 그대로 준비할 수 없습니다 — 화면 위쪽 안내에서 [새 행사 시작…]이나 [다시 나누기]를 고르세요.';
     return '';
   }
 
@@ -813,13 +817,14 @@
     var regroupWhy = whyDisabled('regroup', !!force);
     var exportWhy = whyDisabled('export', !!force);
     ui.openSrcBtn.disabled = !!force;
-    ui.drop.setAttribute('aria-disabled', force ? 'true' : 'false');
+    (ui.drops || [ui.drop]).forEach(function (drop) {
+      drop.setAttribute('aria-disabled', force ? 'true' : 'false');
+    });
     ui.fileInput.disabled = !!force;
     ui.gap.disabled = !!force;
     ui.prepareBtn.disabled = !!prepareWhy;
     ui.regroupBtn.disabled = !!regroupWhy;
     ui.exportBtn.disabled = !!exportWhy;
-    ui.newEventBtn.disabled = !!force;
     // 사진 준비 줄: 두 버튼 이유가 같으면 한 번만, 다르면 버튼 이름을 붙여 둘 다 적는다.
     var prepareLine = '';
     if (prepareWhy && regroupWhy === prepareWhy) prepareLine = prepareWhy;
@@ -841,52 +846,71 @@
       });
     }
     ui.openOutBtn.disabled = !!force;
-  }
 
-  function setCollapsed(value, persist) {
-    state.collapsed = !!value;
-    ui.panel.classList.toggle('wfCollapsed', state.collapsed);
-    setText(ui.collapseBtn, state.collapsed ? '펼치기' : '접기');
-    ui.collapseBtn.setAttribute('aria-expanded', state.collapsed ? 'false' : 'true');
-    syncCorrectionVisibility();
-    if (persist) {
-      try { localStorage.setItem(COLLAPSE_KEY, state.collapsed ? '1' : '0'); } catch (_error) {}
+    // 시작 화면: 버튼이 꺼진 이유를 드롭 영역 안에 한 줄로 적는다.
+    if (ui.startOpenSrc) {
+      ui.startOpenSrc.disabled = !!force;
+      if (ui.startResumeBtn) ui.startResumeBtn.disabled = !!prepareWhy;
+      if (ui.startNewEventBtn) ui.startNewEventBtn.disabled = !newEventAvailability().enabled;
+      var startReason = '';
+      if (state.disabled) startReason = '시작 파일로 연 도구 서버에서만 사진을 넣을 수 있습니다.';
+      else if (force) startReason = whyDisabled('prepare', true);
+      else if (ui.startResume && !ui.startResume.hidden && prepareWhy) startReason = prepareWhy;
+      setText(ui.startWhy, startReason);
     }
   }
 
-  function automaticStep(status) {
-    var job = status.job && status.job.state === 'running' ? status.job : state.job;
-    if (state.uploading) return 0;
-    if (job && job.state === 'running') return job.kind === 'export' ? 3 : 1;
-    if (Number(status.srcCount || 0) === 0) return 0;
-    if (!Array.isArray(status.groups) || status.groups.length === 0) return 1;
-    return 2;
-  }
-
-  function setExpandedStep(index, manual) {
-    if (manual) {
-      state.manualStep = true;
-      state.expandedStep = state.expandedStep === index ? null : index;
-    } else {
-      state.expandedStep = index;
-    }
-    (ui.accordions || []).forEach(function (item, itemIndex) {
-      var open = state.expandedStep === itemIndex;
-      if (item.content) item.content.hidden = !open;
-      item.section.classList.toggle('open', open);
-      setText(item.toggle, open ? '접기' : '펼치기');
-      item.toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  // ---- 단계 패널(오른쪽 서랍) 열고 닫기 ----
+  function renderDrawer() {
+    var step = state.drawerStep;
+    var open = step !== null;
+    ui.drawer.classList.toggle('open', open);
+    ui.drawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+    [0, 1, 3].forEach(function (index) {
+      ui.panes[index].hidden = step !== index;
+      ui.tabs[index].setAttribute('aria-selected', step === index ? 'true' : 'false');
     });
-    syncCorrectionVisibility();
+    setText(ui.drawerTitle, open ? STEP_TITLES[step] : '');
+    if (step === 3) syncExportOptions();
+    notifyState();
   }
 
-  function syncCorrectionVisibility() {
-    var hideCorrection = !!ui.panel && !ui.panel.hidden && !state.collapsed && state.expandedStep !== 2;
-    document.body.classList.toggle('wfCorrectionCollapsed', hideCorrection);
+  function openStep(step) {
+    if (!ui.drawer || !STEP_TITLES[step]) return;
+    if (state.disabled) {
+      notify('시작 파일로 연 도구 서버에서만 쓸 수 있습니다.', 5000);
+      return;
+    }
+    state.drawerStep = step;
+    renderDrawer();
+  }
+
+  // 헤더 단계 버튼: 같은 단계를 다시 누르면 닫는다.
+  function toggleStep(step) {
+    if (state.drawerStep === step) closeDrawer();
+    else openStep(step);
+  }
+
+  function closeDrawer() {
+    if (!ui.drawer || state.drawerStep === null) return;
+    state.drawerStep = null;
+    renderDrawer();
+  }
+
+  function pickFiles() {
+    if (state.disabled || state.uploading || isBusy()) {
+      notify(whyDisabled('upload', true) || '지금은 사진을 넣을 수 없습니다.', 4000);
+      return;
+    }
+    ui.fileInput.click();
   }
 
   function isBusy() {
     return !!(state.job && state.job.state === 'running');
+  }
+
+  function setDropHighlight(on) {
+    (ui.drops || []).forEach(function (drop) { drop.classList.toggle('dragover', on); });
   }
 
   function hasFileTransfer(event) {
@@ -900,16 +924,16 @@
     window.addEventListener('dragover', function (event) {
       if (!hasFileTransfer(event) || state.disabled || state.uploading) return;
       event.preventDefault();
-      ui.drop.classList.add('dragover');
+      setDropHighlight(true);
     }, true);
     window.addEventListener('dragleave', function (event) {
       if (!hasFileTransfer(event)) return;
-      if (!event.relatedTarget) ui.drop.classList.remove('dragover');
+      if (!event.relatedTarget) setDropHighlight(false);
     }, true);
     window.addEventListener('drop', function (event) {
       if (!hasFileTransfer(event)) return;
       event.preventDefault();
-      ui.drop.classList.remove('dragover');
+      setDropHighlight(false);
       if (state.disabled || state.uploading) return;
       var items = Array.from(event.dataTransfer.items || []);
       var hasFolder = items.some(function (item) {
@@ -928,10 +952,9 @@
     var files = Array.from(fileList || []);
     if (!files.length || state.uploading || state.disabled) return;
     state.uploading = true;
-    if (!state.manualStep) setExpandedStep(0, false);
     state.uploadPercent = 0;
     state.logs = [];
-    setText(ui.uploadResults, '');
+    setUploadResults('');
     clearBanner();
     setControlsDisabled(true);
     var results = [];
@@ -959,7 +982,7 @@
         failed += 1;
         results.push(file.name + ' — 실패: ' + (error.detail || error.message));
       }
-      setText(ui.uploadResults, results.join('\n'));
+      setUploadResults(results.join('\n'));
     }
     state.uploadPercent = 100;
     state.uploadLabel = '업로드 완료 ' + (files.length - failed) + '/' + files.length;
@@ -1035,7 +1058,8 @@
   function startJob(path, payload, kind) {
     state.uploadPercent = 0;
     state.uploadLabel = '';
-    if (!state.manualStep) setExpandedStep(kind === 'export' ? 3 : 1, false);
+    if (kind === 'export') openStep(3);
+    else if (!document.body.classList.contains('nodata')) openStep(1);
     setControlsDisabled(true);
     api(path, {method: 'POST', json: payload}).then(function (response) {
       state.job = response.job || {kind: kind, state: 'running'};
@@ -1126,8 +1150,12 @@
       refreshStatus();
       return;
     }
-    if (ui.details) ui.details.open = true;
-    showBanner('작업이 실패했습니다. 아래 “자세한 기록”에서 마지막 오류를 확인하세요.', 'error');
+    (ui.progresses || []).forEach(function (box) { box.details.open = true; });
+    showBanner('작업이 실패했습니다. “자세한 기록”에서 마지막 오류를 확인하세요.', 'error', [
+      {label: '자세한 기록 보기', onClick: function () {
+        if (!document.body.classList.contains('nodata')) openStep(job.kind === 'export' ? 3 : 1);
+      }}
+    ]);
     refreshStatus();
   }
 
@@ -1148,7 +1176,7 @@
     state.cancelling = true;
     if (state.pollTimer) clearTimeout(state.pollTimer);
     state.pollTimer = null;
-    ui.cancelBtn.disabled = true;
+    (ui.progresses || []).forEach(function (box) { box.cancel.disabled = true; });
     api('/api/job/cancel', {method: 'POST', json: {}}).then(function (payload) {
       state.cancelling = false;
       state.job = payload.job || state.job;
@@ -1159,7 +1187,7 @@
       finishJob(state.job || {state: 'cancelled', kind: state.activeKind});
     }).catch(function (error) {
       state.cancelling = false;
-      ui.cancelBtn.disabled = false;
+      (ui.progresses || []).forEach(function (box) { box.cancel.disabled = false; });
       showApiError(error);
       watchJob(state.activeKind);
     });
@@ -1172,33 +1200,38 @@
 
   function renderProgress() {
     notifyState();
-    if (!ui.progress) return;
+    if (!ui.progresses) return;
+    var boxes = ui.progresses;
     if (state.uploading || state.uploadPercent === 100) {
-      ui.progress.classList.add('show');
-      setText(ui.progressLabel, state.uploadLabel || '사진 업로드');
-      ui.barFill.style.width = state.uploadPercent + '%';
-      ui.cancelBtn.hidden = true;
-      setText(ui.progressNote, '파일별 결과는 사진 넣기 단계 아래에 표시됩니다.');
-      setText(ui.logAll, '');
+      boxes.forEach(function (box) {
+        box.root.classList.add('show');
+        setText(box.label, state.uploadLabel || '사진 업로드');
+        box.fill.style.width = state.uploadPercent + '%';
+        box.cancel.hidden = true;
+        setText(box.note, '파일별 결과는 아래에 표시됩니다.');
+        setText(box.log, '');
+      });
       return;
     }
     var job = state.job;
     if (!job && !state.logs.length) {
-      ui.progress.classList.remove('show');
+      boxes.forEach(function (box) { box.root.classList.remove('show'); });
       return;
     }
-    ui.progress.classList.add('show');
     var phase = Number(job && job.phase || 0);
     var total = Number(job && job.phaseTotal || 0);
     var percent = total > 0 ? Math.round((phase / total) * 100) : 4;
     if (job && job.state === 'done') percent = 100;
-    setText(ui.progressLabel,
-      job ? ((job.phaseName || '작업 중') + (total ? ' · 단계 ' + phase + '/' + total : '')) : '작업 로그');
-    ui.barFill.style.width = Math.max(0, Math.min(100, percent)) + '%';
-    ui.cancelBtn.hidden = !(job && job.state === 'running');
-    ui.cancelBtn.disabled = state.cancelling;
-    setText(ui.progressNote, '');
-    setText(ui.logAll, state.logs.join('\n'));
+    boxes.forEach(function (box) {
+      box.root.classList.add('show');
+      setText(box.label,
+        job ? ((job.phaseName || '작업 중') + (total ? ' · 단계 ' + phase + '/' + total : '')) : '작업 로그');
+      box.fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+      box.cancel.hidden = !(job && job.state === 'running');
+      box.cancel.disabled = state.cancelling;
+      setText(box.note, '');
+      setText(box.log, state.logs.join('\n'));
+    });
   }
 
   function showBanner(message, level, actions) {
@@ -1230,6 +1263,7 @@
   function showServerDown() {
     state.offline = true;
     setControlsDisabled(true);
+    notifyState();
     showBanner('도구 서버가 꺼졌습니다. 시작 파일(시작하기)을 다시 실행하세요.', 'error', [
       {label: '다시 연결', className: 'primary', onClick: reconnect}
     ]);
@@ -1251,12 +1285,9 @@
       state.disabled = true;
       notifyState();
       if (unavailable(error)) {
-        ui.panel.hidden = true;
-        restoreCorrectionEditor();
-        document.body.classList.remove('wfCorrectionCollapsed');
+        closeDrawer();
         return;
       }
-      ui.panel.hidden = false;
       setControlsDisabled(true);
       if (isNetworkError(error)) {
         showServerDown();
@@ -1405,13 +1436,13 @@
   }
 
   // ===================== 이 주소에 저장된 작업 없음 안내 =====================
-  function buildLocalBand(main) {
+  function buildLocalBand(host) {
     var note = buildNote('banner warn');
     note.root.id = 'wfLocalBand';
     ui.localBand = note.root;
     ui.localBandText = note.text;
     ui.localBandActions = note.actions;
-    main.prepend(ui.localBand);
+    host.prepend(ui.localBand);
   }
 
   function formatBackupTime(seconds) {
@@ -1491,7 +1522,7 @@
 
   function init() {
     injectStyle();
-    if (!buildPanel()) return;
+    if (!buildUi()) return;
     showPendingToast();
     connect();
   }
@@ -1501,7 +1532,18 @@
     renameAvailability: renameAvailability,
     renameGroup: renameGroup,
     autoDetectAvailability: autoDetectAvailability,
-    autoDetect: autoDetect
+    autoDetect: autoDetect,
+    // 헤더(index.html)가 쓰는 것: 서버 상태 요약 · 단계 패널 · 사진 넣기/준비/폴더 열기 · 다시 연결 · 새 행사
+    summary: summary,
+    openStep: openStep,
+    toggleStep: toggleStep,
+    closeDrawer: closeDrawer,
+    pickFiles: pickFiles,
+    prepare: function () { runPrepare(false); },
+    openFolder: openFolder,
+    reconnect: reconnect,
+    confirmNewEvent: confirmNewEvent,
+    newEventAvailability: newEventAvailability
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
