@@ -289,6 +289,24 @@ body.nodata #nav{display:none}
 .paneHead{flex:none;display:flex;align-items:center;justify-content:space-between;gap:var(--s2);padding:var(--s2) var(--s3);font-weight:700}
 .paneHead>span:first-child{flex:none;white-space:nowrap}   /* 칸 제목은 줄어들거나 줄바꿈되지 않는다 */
 .paneHead .muted{min-width:0;font-weight:500;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}   /* 안내 문구는 좁으면 말줄임 */
+/* 원본 칸 머리: 제목 · 안내(넓을 때만) · 경계 여백. 칸 폭에 맞춰 안내 → 상태 글 → 슬라이더 순으로 줄인다. */
+.stagePanel{container:stg/inline-size}
+.stagePanel .paneHead{gap:var(--s1)}
+.paneHead .paneHint{flex:1 1 0;text-align:left;padding-left:var(--s1)}
+.marginCtl{flex:none;display:inline-flex;align-items:center;gap:2px;font-size:var(--f1);font-weight:600}
+.marginCtl .mLbl{margin-right:2px;color:var(--text-2);white-space:nowrap}
+.marginCtl .btn.icon{font-size:var(--f3);font-weight:700;line-height:1}
+.marginCtl .btn.icon .ic{font-size:var(--f2)}
+.marginCtl input[type=range]{width:76px;margin:0 2px;accent-color:var(--primary);cursor:pointer}
+.marginCtl .mVal{min-width:40px;text-align:center;font-variant-numeric:tabular-nums;color:var(--muted);user-select:none;cursor:default}
+.marginCtl .mVal.on{color:var(--primary-text)}
+.marginCtl .mSfx{flex:none;width:88px;margin-left:2px;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}   /* 폭 고정 — 글이 바뀌어도 앞쪽 컨트롤이 흔들리지 않는다 */
+.marginCtl .mSfx[data-tone=warn]{color:var(--warn);font-weight:600}
+.marginCtl[data-scope=deck]{opacity:.45;pointer-events:none}
+@container stg (max-width:640px){.paneHead .paneHint{display:none}}
+@container stg (max-width:470px){.marginCtl .mSfx{display:none}}
+@container stg (max-width:400px){.marginCtl input[type=range]{width:52px}}
+@container stg (max-width:330px){.marginCtl .mLbl,.marginCtl input[type=range]{display:none}}
 /* 사진 칸: 남는 크기를 다 쓰고, 안의 사진 상자는 그 안에 비율대로 딱 맞게 들어간다(cqw/cqh) */
 .paneStage{position:relative;flex:1;min-height:0;container-type:size;display:grid;place-items:center;margin:0 var(--s2) var(--s2);padding:var(--s2);border-radius:var(--r2);background:var(--photo-bg)}
 .stagePanel .paneStage{container-type:inline-size;display:flex;flex-direction:column;align-items:stretch;gap:var(--s2)}   /* 도구줄(위) + 사진 칸(남는 높이) */
@@ -516,7 +534,18 @@ body.eyedropping #preview{cursor:crosshair}
       </section>
       <div class="panes">
         <section class="pane stagePanel">
-          <div class="paneHead"><span>원본 사진</span><span class="muted" title="손잡이를 끌어 슬라이드 경계에 맞추세요">손잡이를 끌어 슬라이드 경계에 맞추세요</span></div>
+          <div class="paneHead"><span>원본 사진</span><span class="muted paneHint" title="손잡이를 끌어 슬라이드 경계에 맞추세요">손잡이를 끌어 슬라이드 경계에 맞추세요</span>
+            <!-- 경계 여백: 자동 찾기 결과를 안쪽(−)·바깥쪽(+)으로 옮긴다. 값은 이후 모든 자동 찾기에 들어가고, 자동으로 찾은 지금 사진은 바로 따라 움직인다. -->
+            <div id="marginCtl" class="marginCtl" role="group" aria-label="경계 여백" data-scope="deck">
+              <span class="mLbl">경계 여백</span>
+              <button id="marginMinusBtn" type="button" class="btn ghost sm icon" aria-label="경계 여백 안쪽으로 0.5%" title="안쪽으로 0.5% — 경계를 더 타이트하게 ( [ )">−</button>
+              <input id="marginRange" type="range" min="-3" max="3" step="0.5" value="0" aria-label="경계 여백 (%)" title="끌어서 경계 여백을 조절합니다. 더블클릭하면 0%">
+              <button id="marginPlusBtn" type="button" class="btn ghost sm icon" aria-label="경계 여백 바깥쪽으로 0.5%" title="바깥쪽으로 0.5% — 경계에 여유를 ( ] )">+</button>
+              <span id="marginVal" class="mVal" role="status" aria-live="polite">0%</span>
+              <span id="marginSfx" class="mSfx"></span>
+              <button id="marginMenuBtn" type="button" class="btn ghost sm icon" aria-haspopup="menu" aria-expanded="false" aria-label="경계 여백 메뉴" title="이 발표의 자동 찾은 사진에 적용 · 0%로 되돌리기"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-more"/></svg></button>
+            </div>
+          </div>
           <div class="paneStage">
             <!-- 경계 도구줄: 사진 위 한 줄(넓으면) 또는 두 줄. 모든 버튼에 글자 라벨이 붙는다(아이콘만 표시는 아주 좁은 칸에서만). -->
             <div class="tools" role="toolbar" aria-label="경계 도구">
@@ -664,6 +693,8 @@ const LS_STATUS='slideStatus_v1';
 const LS_RATIOS='slideRatios_v1';
 const LS_COLOR='slideColor_v1';           // {file: {brightness,contrast,...}} — PhotoScape식 수동 색보정
 const LS_SHOW_EXCLUDED='slideShowExcluded_v1';
+const LS_MARGIN='slideMargin_v1';          // 경계 여백 기본값(%, -3~+3) — 자동 찾기 때 쓰고 백업에 함께 담긴다(새 행사 시작으로는 비우지 않는다)
+const LS_AUTORAW='slideAutoRaw_v1';        // {file:{raw:[[x,y]x4],pct}} — 자동 찾기 원시 경계와 그때 적용한 여백. 여백을 바꿔도 누적되지 않게 하는 기준
 // 백업 유도용 로컬 메타. ⚠️ BACKUP_KEYS 에 넣지 않는다 — 백업 JSON 스키마를 기존 6키 그대로 유지해야
 // color_render.py(load_backup)와 구 백업 파일 호환이 깨지지 않는다.
 const LS_SPLIT='slideSplit_v1';            // 원본|미리보기 너비 비율(왼쪽 %) — 화면 선호라 백업·새 행사 초기화 대상 아님
@@ -681,6 +712,7 @@ const statusStore=readStore(LS_STATUS,{});
 // Ratio is persisted per image because mixed video sources can contain different slide formats.
 const ratioStore=readStore(LS_RATIOS,{});
 const colorStore=readStore(LS_COLOR,{});   // 수동 색보정값 (이미지키 → 파라미터)
+const autoRawStore=readStore(LS_AUTORAW,{});
 let clusterByFile={};                       // 이미지키 → 군집(dark/white/mixed) (classification.json)
 let clusterParams=null;                      // 군집별 자동 색보정 파라미터 (자동값 불러오기용)
 let colorMode=false;                         // 색보정 모드 on/off
@@ -732,14 +764,14 @@ function showStoreFail(msg){
 // slideColor_v1(수동 색보정)도 백업에 포함 — 코너/상태/비율/이동과 함께 라운드트립.
 // slideOrder_v1(폴더 안 순서)도 백업에 포함한다 — 자료 사이에 사진을 끼워 넣은 배치가
 // 백업에 안 들어가면 캐시를 지우는 순간 그 작업만 통째로 사라진다.
-const BACKUP_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES,LS_ORDER];
+const BACKUP_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES,LS_ORDER,LS_AUTORAW,LS_MARGIN];
 function collectBackup(){
   const bak={_type:'slide_tool_backup',_version:1,_savedAt:new Date().toISOString(),data:{}};
   BACKUP_KEYS.forEach(k=>{const v=localStorage.getItem(k);if(v!=null)bak.data[k]=v;});
   return bak;
 }
 // 이 도구가 localStorage 에 쓰는 키 전부(구 버전 키 포함). 새 행사 시작이 브라우저 쪽 작업을 비울 때 쓴다.
-const TOOL_STORE_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES,LS_ORDER,LS_BACKUP_META,LS_DIRTY,
+const TOOL_STORE_KEYS=[LS_CORNERS,LS_STATUS,LS_RATIOS,LS_COLOR,LS_SHOW_EXCLUDED,LS_MOVES,LS_ORDER,LS_AUTORAW,LS_BACKUP_META,LS_DIRTY,
   'slideCorners','slideStatus','slideRatios'];
 // 보정 작업이 실제로 저장된 흔적이 있는 키(보기 설정 LS_SHOW_EXCLUDED 는 뺀다) — 이 출처에 저장된 작업이 있는지 판정.
 const WORK_STORE_KEYS=TOOL_STORE_KEYS.filter(k=>k!==LS_SHOW_EXCLUDED);
@@ -853,12 +885,13 @@ function migrateLocalGroupState(from,to){
   const nextRatios=renamedKeyStore(ratioStore,from,to);
   const nextColor=renamedKeyStore(colorStore,from,to);
   const nextMoves=renamedKeyStore(moveStore,from,to);
+  const nextAutoRaw=renamedKeyStore(autoRawStore,from,to);
   const nextUndo=renamedKeyStore(undoStacks,from,to);
   Object.keys(nextMoves).forEach(key=>{if(nextMoves[key]===from)nextMoves[key]=to;});
   const nextDirty=Array.from(colorDirty,file=>renamedFileKey(file,from,to));
   const updates=[
     [LS_CORNERS,nextCorners],[LS_STATUS,nextStatus],[LS_RATIOS,nextRatios],
-    [LS_COLOR,nextColor],[LS_MOVES,nextMoves],[LS_DIRTY,nextDirty]
+    [LS_COLOR,nextColor],[LS_MOVES,nextMoves],[LS_DIRTY,nextDirty],[LS_AUTORAW,nextAutoRaw]
   ];
   const originals=updates.map(([key])=>[key,localStorage.getItem(key)]);
   try{updates.forEach(([key,value])=>localStorage.setItem(key,JSON.stringify(value)));}
@@ -868,6 +901,7 @@ function migrateLocalGroupState(from,to){
   }
   replaceObject(cornersStore,nextCorners);replaceObject(statusStore,nextStatus);
   replaceObject(ratioStore,nextRatios);replaceObject(colorStore,nextColor);replaceObject(moveStore,nextMoves);
+  replaceObject(autoRawStore,nextAutoRaw);
   replaceObject(undoStacks,nextUndo);
   colorDirty.clear();nextDirty.forEach(file=>colorDirty.add(file));
   clusterByFile=renamedKeyStore(clusterByFile,from,to);
@@ -1042,9 +1076,78 @@ let autoDetectBusy=false;
 let autoUndo=null;        // {items:[{file,prev,prevStatus,applied}]}
 // 손대지 않은 상태 = 기본 코너이거나 그것을 90° 돌리기만 한 순환 배열
 const ROTATED_DEFAULTS=[0,1,2,3].map(k=>{let c=cloneCorners(DEFAULT_CORNERS);for(let i=0;i<k;i++)c=rotateCorners(c,1);return c;});
+// ===MARGIN_CORE_START===  경계 여백 계산 — 순수 함수(DOM·저장소 접근 금지). 05_스크립트/test_margin.py 가 이 블록과 rotateCorners 를 node 로 그대로 추출·실행한다.
+// 여백 = 자동 찾기로 얻은 경계를 **보정된 슬라이드 좌표계에서** 가로·세로 각각 pct% 만큼 바깥(+)·안쪽(−)으로 옮긴다.
+// 사각형 4점으로 호모그래피 H(단위 정사각형 → 사진 정규좌표)를 구하고, 정사각형을 (-m,-m)~(1+m,1+m) 로 넓히거나 좁힌 뒤 H 로 사진에 되사영한다.
+// 그래서 원근이 있어도 네 변이 각자 평행 이동한 것처럼 슬라이드 기준 균일 여백이 된다(중심 확대·축소는 원근에서 어긋난다).
+// 경계 배열은 [TL,TR,BL,BR](90° 회전으로 순환된 배열도 같다 — 여백은 대칭이라 순환과 교환된다). 좌표는 원본 사진 정규좌표.
+const MARGIN_MIN=-3,MARGIN_MAX=3,MARGIN_STEP=0.5;   // % 단위
+function clampMarginPct(v){
+  const n=Number(v);if(!Number.isFinite(n))return 0;
+  return (Math.round(Math.max(MARGIN_MIN,Math.min(MARGIN_MAX,n))/MARGIN_STEP)*MARGIN_STEP)||0;   // ||0 : -0 → 0
+}
 function sameCorners(a,b){
   return !!a&&!!b&&a.length===4&&b.length===4&&a.every((p,i)=>Math.abs(p[0]-b[i][0])<1e-6&&Math.abs(p[1]-b[i][1])<1e-6);
 }
+function isConvexQuad(c){   // 순서 TL,TR,BR,BL 로 한 바퀴 돌며 꺾임 방향이 같은지(0에 가까우면 납작함)
+  const o=[c[0],c[1],c[3],c[2]];let sign=0;
+  for(let i=0;i<4;i++){
+    const p=o[i],q=o[(i+1)%4],r=o[(i+2)%4];
+    const z=(q[0]-p[0])*(r[1]-q[1])-(q[1]-p[1])*(r[0]-q[0]);
+    if(Math.abs(z)<1e-9)return false;
+    const sg=z>0?1:-1;
+    if(!sign)sign=sg;else if(sg!==sign)return false;
+  }
+  return true;
+}
+// 단위 정사각형 (u,v) → 사각형. (0,0)→TL (1,0)→TR (0,1)→BL (1,1)→BR. Heckbert 닫힌 식 — 못 구하면 null.
+function unitSquareToQuad(c){
+  const x0=c[0][0],y0=c[0][1],x1=c[1][0],y1=c[1][1],x3=c[2][0],y3=c[2][1],x2=c[3][0],y2=c[3][1];   // Heckbert 번호: 0=TL 1=TR 2=BR 3=BL
+  const dx1=x1-x2,dx2=x3-x2,dx3=x0-x1+x2-x3,dy1=y1-y2,dy2=y3-y2,dy3=y0-y1+y2-y3;
+  let g=0,h=0;
+  if(Math.abs(dx3)>1e-12||Math.abs(dy3)>1e-12){
+    const den=dx1*dy2-dx2*dy1;
+    if(Math.abs(den)<1e-12)return null;
+    g=(dx3*dy2-dx2*dy3)/den;h=(dx1*dy3-dx3*dy1)/den;
+  }
+  return {a:x1-x0+g*x1,b:x3-x0+h*x3,c:x0,d:y1-y0+g*y1,e:y3-y0+h*y3,f:y0,g,h};
+}
+// 반환 {corners, clamped, ok}. clamped = 사진 가장자리([0,1])를 넘어 잘린 모서리 수, ok=false 면 여백을 못 넣어 corners 는 입력 그대로(5자리 반올림).
+function marginCorners(corners,pct){
+  const r5=cs=>cs.map(p=>[+(+p[0]).toFixed(5),+(+p[1]).toFixed(5)]);
+  const m=(Number(pct)||0)/100;
+  const keep={corners:r5(corners),clamped:0,ok:true};
+  if(!m)return keep;
+  const bad={corners:keep.corners,clamped:0,ok:false};
+  if(!isConvexQuad(corners))return bad;
+  const H=unitSquareToQuad(corners);if(!H)return bad;
+  const out=[];let clamped=0;
+  for(const uv of [[-m,-m],[1+m,-m],[-m,1+m],[1+m,1+m]]){
+    const w=H.g*uv[0]+H.h*uv[1]+1;
+    if(!(w>1e-6))return bad;                      // 지평선 너머로 넘어감 — 너무 비스듬해 여백을 줄 수 없다
+    const x=(H.a*uv[0]+H.b*uv[1]+H.c)/w,y=(H.d*uv[0]+H.e*uv[1]+H.f)/w;
+    if(!Number.isFinite(x)||!Number.isFinite(y))return bad;
+    const cx=Math.max(0,Math.min(1,x)),cy=Math.max(0,Math.min(1,y));
+    if(cx!==x||cy!==y)clamped++;
+    out.push([cx,cy]);
+  }
+  return {corners:r5(out),clamped,ok:true};
+}
+// 자동 찾기 기록 rec={raw,pct} 에서 pct 를 적용한 결과. k = 그 사이 시계 90° 를 돌린 횟수(순환은 여백과 교환된다).
+function marginFromRecord(rec,pct,k){
+  const r=marginCorners(rec.raw,pct);
+  let c=r.corners;for(let i=0;i<(k||0);i++)c=rotateCorners(c,1);
+  return {corners:c,clamped:r.clamped,ok:r.ok};
+}
+// 지금 경계가 기록 rec 의 결과 그대로(=손대지 않음)이면 90° 회전 횟수(0~3), 손댔거나 기록이 없으면 -1.
+function autoRecordRotation(cur,rec){
+  if(!rec||!Array.isArray(rec.raw)||rec.raw.length!==4||!cur)return -1;
+  let c=marginCorners(rec.raw,rec.pct||0).corners;
+  for(let k=0;k<4;k++){if(sameCorners(cur,c))return k;c=rotateCorners(c,1);}
+  return -1;
+}
+// ===MARGIN_CORE_END===
+let marginPct=clampMarginPct(readStore(LS_MARGIN,0));   // 경계 여백 기본값(%) — 자동 찾기 결과에 넣는 값. 코어의 const 다음에 읽어야 한다
 function isUntouchedCorners(file){
   const c=cornersStore[file];if(!c)return true;
   return ROTATED_DEFAULTS.some(d=>sameCorners(c,d));
@@ -1079,6 +1182,7 @@ function updateAutoDetectUi(){
     undo.disabled=!autoUndo||autoDetectBusy;
     undo.title=autoUndo?`찾기 되돌리기 — 직전 자동 찾기(${autoUndo.items.length}장)를 되돌립니다`:'되돌릴 자동 찾기가 없습니다';
   }
+  updateMarginUi();
   const retry=document.getElementById('retryRotBtn');
   if(retry){retry.disabled=!a.enabled;retry.title=a.enabled?'사진이 옆으로 누워 있을 수 있어 좌우로 90° 돌려 본 뒤 더 잘 찾은 쪽을 씁니다':a.reason;}
 }
@@ -1104,17 +1208,24 @@ async function runAutoDetect(targets,label){
 // 결과를 저장소에 넣는다. writeStore 는 호출마다 저장소 전체를 직렬화하므로 마지막에 한 번씩만 쓴다.
 // 반환 {found, review} — review = 확신이 낮아 확인이 필요하거나(모서리는 넣는다) 아예 못 찾은 장수.
 // 찾은 사진에는 status.auto 를 켠다(사이드바 '자동' 배지) — 손으로 고치거나 완료 표시하면 clearReview·toggleStatus 가 내린다.
+// 경계 여백(marginPct)을 넣어 저장한다 — 원시 경계는 autoRawStore 에 따로 두어 여백을 바꿔도 누적되지 않는다.
+// 반환 clamped = 여백이 사진 가장자리에 걸려 잘린 사진 수, noMargin = 사각형이 너무 비스듬해 여백을 못 넣은 사진 수.
 function applyAutoResults(targets,results){
-  const items=[];let found=0,review=0;
+  const items=[];let found=0,review=0,clamped=0,noMargin=0;
   targets.forEach(t=>{
     const r=results[t.file];
     if(!r||origFolderOf(t.file)===null)return;    // 그 사이 사라진 사진(이름 변경 등)은 건너뛴다
     const okCorners=Array.isArray(r.corners)&&r.corners.length===4
       &&r.corners.every(p=>Array.isArray(p)&&p.length===2&&Number.isFinite(+p[0])&&Number.isFinite(+p[1]));
     const item={file:t.file,prev:cornersStore[t.file]?cloneCorners(cornersStore[t.file]):null,
-      prevStatus:statusStore[t.file]?{...statusStore[t.file]}:null,applied:null};
+      prevStatus:statusStore[t.file]?{...statusStore[t.file]}:null,
+      prevRec:autoRawStore[t.file]?JSON.parse(JSON.stringify(autoRawStore[t.file])):null,applied:null};
     if(okCorners){
-      cornersStore[t.file]=r.corners.map(p=>[+(+p[0]).toFixed(5),+(+p[1]).toFixed(5)]);
+      const raw=r.corners.map(p=>[+(+p[0]).toFixed(5),+(+p[1]).toFixed(5)]);
+      const mc=marginCorners(raw,marginPct);
+      cornersStore[t.file]=mc.corners;                       // mc.ok=false 면 원시 경계 그대로
+      autoRawStore[t.file]={raw,pct:mc.ok?marginPct:0};
+      if(marginPct&&!mc.ok)noMargin++;else if(mc.clamped)clamped++;
       item.applied=cloneCorners(cornersStore[t.file]);
     }
     const st={...statusFor(t.file)};
@@ -1122,14 +1233,23 @@ function applyAutoResults(targets,results){
     if(Object.keys(st).length)statusStore[t.file]=st;else delete statusStore[t.file];
     items.push(item);
   });
-  if(!items.length)return {found,review};
+  if(!items.length)return {found,review,clamped,noMargin};
   writeStore(LS_CORNERS,cornersStore);
+  writeStore(LS_AUTORAW,autoRawStore);
   writeStore(LS_STATUS,statusStore);
   autoUndo={items};
   const cur=currentSlide();
   if(cur&&items.some(it=>it.file===cur.file)){syncStageRot();layoutStage();positionHandles();scheduleRender();updateStatusUi();}
   renderNav();
-  return {found,review};
+  return {found,review,clamped,noMargin};
+}
+// 자동 찾기 알림 끝에 붙이는 여백 안내 — 0% 가 아닐 때만. 왜 사각형이 평소와 다른지 바로 알 수 있게 한다.
+function marginNote(res){
+  if(!marginPct)return '';
+  let t=` · 경계 여백 ${fmtMargin(marginPct)} 적용`;
+  if(res&&res.clamped)t+=` (${res.clamped}장은 사진 가장자리에서 잘림)`;
+  if(res&&res.noMargin)t+=` (${res.noMargin}장은 너무 비스듬해 여백 없이)`;
+  return t;
 }
 
 // 자동 찾기를 끝낸 뒤 알림 — 되돌리기 버튼이 함께 뜬다(직전 자동 찾기 한 번을 되돌린다).
@@ -1146,10 +1266,11 @@ async function autoDetectCurrent(){
   const {results,error}=await runAutoDetect([target],'');
   if(error){toast('자동 찾기 실패: '+(error.detail||error.message),6000);updateAutoDetectUi();return;}
   const r=results[slide.file];
-  const {found}=applyAutoResults([target],results);
+  const res=applyAutoResults([target],results);
+  const {found}=res;
   const hasCorners=!!(r&&r.corners);
-  toastAutoResult(found?'경계를 찾았습니다 — 어긋나면 손잡이로 고치세요'
-    :hasCorners?'경계를 찾았지만 확실하지 않습니다 — 확인 필요':'경계를 찾지 못했습니다 — 직접 지정하세요',hasCorners);
+  toastAutoResult((found?'경계를 찾았습니다 — 어긋나면 손잡이로 고치세요'
+    :hasCorners?'경계를 찾았지만 확실하지 않습니다 — 확인 필요':'경계를 찾지 못했습니다 — 직접 지정하세요')+(hasCorners?marginNote(res):''),hasCorners);
   updateAutoDetectUi();
 }
 
@@ -1169,9 +1290,10 @@ async function autoDetectSlides(slides,label,overwrite){
   const skipNote=skipped?` · 이미 손댄 ${skipped}장은 건너뜀`:'';
   if(!targets.length){toast('자동으로 찾을 사진이 없습니다'+skipNote+(skipped?' (Alt+클릭: 덮어쓰기)':''),5000);return;}
   const {results,error}=await runAutoDetect(targets,label);
-  const {found,review}=applyAutoResults(targets,results);
+  const res=applyAutoResults(targets,results);
+  const {found,review}=res;
   const done=found+review;
-  let msg=`${targets.length}장 중 ${found}장 찾음`+(review?` · ${review}장 확인 필요`:'')+skipNote;
+  let msg=`${targets.length}장 중 ${found}장 찾음`+(review?` · ${review}장 확인 필요`:'')+skipNote+marginNote(res);
   if(error)msg=`자동 찾기가 중간에 멈췄습니다(${error.detail||error.message}) — ${done}장 처리`+(done?` · ${found}장 찾음, ${review}장 확인 필요`:'');
   toastAutoResult(msg,done>0);
   updateAutoDetectUi();
@@ -1212,8 +1334,8 @@ async function retryRotatedDetect(){
   if(!tries.length){toast('돌려 봐도 경계를 찾지 못했습니다 — 직접 지정하세요',5000);updateAutoDetectUi();return;}
   tries.sort((x,y)=>((y.r.review?0:1)-(x.r.review?0:1))||((y.r.conf||0)-(x.r.conf||0)));
   const best=tries[0];
-  const {found}=applyAutoResults([{file,rot:best.rot}],{[file]:best.r});
-  toastAutoResult(found?'돌려서 경계를 찾았습니다 — 어긋나면 손잡이로 고치세요':'돌려서 찾았지만 확실하지 않습니다 — 확인 필요',true);
+  const res=applyAutoResults([{file,rot:best.rot}],{[file]:best.r});
+  toastAutoResult((res.found?'돌려서 경계를 찾았습니다 — 어긋나면 손잡이로 고치세요':'돌려서 찾았지만 확실하지 않습니다 — 확인 필요')+marginNote(res),true);
   updateAutoDetectUi();
 }
 
@@ -1224,18 +1346,232 @@ function undoAutoDetect(){
     if(it.applied){
       if(!sameCorners(cornersStore[it.file],it.applied)){kept++;return;}   // 그 뒤 손으로 고친 사진은 그대로 둔다
       if(it.prev)cornersStore[it.file]=it.prev;else delete cornersStore[it.file];
+      if(it.prevRec)autoRawStore[it.file]=it.prevRec;else delete autoRawStore[it.file];
     }
     if(it.prevStatus)statusStore[it.file]=it.prevStatus;else delete statusStore[it.file];
     n++;
   });
   autoUndo=null;
   writeStore(LS_CORNERS,cornersStore);
+  writeStore(LS_AUTORAW,autoRawStore);
   writeStore(LS_STATUS,statusStore);
   if(currentSlide()){syncStageRot();layoutStage();positionHandles();scheduleRender();updateStatusUi();}
   renderNav();
   toast(`자동 찾기를 되돌렸습니다 (${n}장${kept?`, 직접 고친 ${kept}장은 그대로`:''})`);
   updateAutoDetectUi();
 }
+
+// ---- 경계 여백 (자동 찾기 결과를 안쪽·바깥쪽으로 옮기는 설정) ----
+// 원본 칸 머리의 [경계 여백 − ▬ + 값] 이 조절한다. 값은 ① 이후 모든 자동 찾기(한 장·발표·일괄·돌려서 다시 찾기)에 들어가고
+// ② 지금 사진이 '자동 찾기 결과 그대로'면 즉시 따라 움직인다. 손잡이·붙여넣기 등으로 손댄 사진은 건드리지 않는다(수동).
+// 기준은 늘 자동 찾기 원시 경계(autoRawStore) — 여백을 여러 번 바꿔도 누적되지 않는다.
+function fmtMargin(p){return p===0?'0%':(p>0?'+':'−')+Math.abs(p).toFixed(Number.isInteger(p)?0:1)+'%';}
+function trackedRotation(file){return autoRecordRotation(cornersStore[file],autoRawStore[file]);}
+// 지금 사진에 여백이 어떻게 걸리는가: tracked = 자동 찾기 결과 그대로(따라 움직임) · fresh = 아직 안 찾음 · manual = 손댔거나 예전에 찾은 것 · deck = 해당 없음
+function marginScope(file){
+  if(!file||isDeck(file))return 'deck';
+  if(trackedRotation(file)>=0)return 'tracked';
+  return isUntouchedCorners(file)?'fresh':'manual';
+}
+let marginTween=null;                 // 여백을 바꿀 때 사각형이 부드럽게 옮겨 가는 애니메이션(표시 전용 — 저장값은 곧바로 최종값)
+const marginNoted=new Set();          // 이 세션에서 '이 사진은 안 바뀐다' 를 이미 알려 준 사진
+function syncAutoUndo(file){          // 여백을 바꾼 사진은 '찾기 되돌리기' 가 손으로 고친 것으로 오해하지 않게 기준을 갱신
+  if(autoUndo)autoUndo.items.forEach(it=>{if(it.file===file&&it.applied)it.applied=cloneCorners(cornersStore[file]);});
+}
+function tweenHandles(from,to,file){
+  const tw=marginTween={cur:from};
+  if(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches){positionHandles();return;}
+  const t0=performance.now(),D=150;
+  const step=now=>{
+    if(marginTween!==tw)return;
+    const cur=currentSlide();
+    if(!cur||cur.file!==file){marginTween=null;return;}
+    const t=Math.min(1,(now-t0)/D),e=1-Math.pow(1-t,3);
+    if(t>=1){positionHandles();return;}   // positionHandles() 가 애니메이션을 끝낸다
+    tw.cur=from.map((p,i)=>[p[0]+(to[i][0]-p[0])*e,p[1]+(to[i][1]-p[1])*e]);
+    positionHandles(tw.cur);
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+// 지금 사진에 marginPct 를 반영한다. 반영했으면 true. quiet=true 면 안내 알림을 띄우지 않는다.
+function applyMarginToCurrent(quiet){
+  const slide=currentSlide();if(!slide||isDeck(slide.file))return false;
+  const file=slide.file,scope=marginScope(file);
+  if(scope!=='tracked'){
+    if(!quiet&&!marginNoted.has(file)){
+      marginNoted.add(file);
+      toast(scope==='fresh'?'아직 자동으로 찾지 않은 사진입니다 — «경계 자동 찾기»를 누르면 이 여백으로 찾습니다'
+        :'직접 고친 경계라 이 사진은 그대로 둡니다 — 여백은 다음 자동 찾기부터 적용돼요',5200);
+    }
+    return false;
+  }
+  const rec=autoRawStore[file],k=trackedRotation(file);
+  const from=marginTween&&marginTween.cur?marginTween.cur:getCorners(file);
+  const r=marginFromRecord(rec,marginPct,k);
+  cornersStore[file]=r.corners;
+  autoRawStore[file]={...rec,pct:r.ok?marginPct:0};
+  writeStore(LS_CORNERS,cornersStore);writeStore(LS_AUTORAW,autoRawStore);
+  syncAutoUndo(file);
+  if(marginPct&&!r.ok&&!quiet)toast('사각형이 너무 비스듬해 이 사진에는 여백을 넣을 수 없습니다',4200);
+  tweenHandles(from,r.corners,file);
+  scheduleRender();
+  return true;
+}
+function setMarginPct(v){
+  const next=clampMarginPct(v);
+  if(next===marginPct){updateMarginUi();return;}
+  marginPct=next;
+  writeStore(LS_MARGIN,marginPct);
+  applyMarginToCurrent();
+  updateMarginUi();
+}
+function stepMargin(dir){setMarginPct(marginPct+dir*MARGIN_STEP);}
+function updateMarginUi(){
+  const ctl=document.getElementById('marginCtl');if(!ctl)return;
+  const slide=currentSlide(),file=slide&&slide.file;
+  const scope=marginScope(file);
+  const rec=file?autoRawStore[file]:null;
+  let sfx='',tone='';
+  if(scope==='tracked'){
+    const r=marginFromRecord(rec,marginPct,trackedRotation(file));
+    if((rec.pct||0)!==marginPct){sfx='이 사진 '+fmtMargin(rec.pct||0);tone='note';}
+    else if(marginPct&&!r.ok){sfx='넣지 못함';tone='warn';}
+    else if(r.clamped){sfx='사진 끝에 닿음';tone='warn';}
+    else sfx=marginPct>0?'바깥':marginPct<0?'안쪽':'';
+  }else if(scope==='fresh'){sfx=marginPct?'찾을 때 적용':'';tone='note';}
+  else if(scope==='manual'){sfx=marginPct?'이 사진은 그대로':'';tone='note';}
+  const tips={
+    tracked:'자동으로 찾은 경계라 여백을 바꾸면 이 사진이 바로 따라 움직입니다.',
+    fresh:'아직 자동으로 찾지 않은 사진입니다. 여기서 정한 여백은 «경계 자동 찾기» 때 들어갑니다.',
+    manual:'직접 고쳤거나 예전에 찾은 경계라 이 사진은 그대로 둡니다. 여백은 다음 자동 찾기부터 들어갑니다.',
+    deck:''
+  };
+  const set=(id,fn)=>{const e=document.getElementById(id);if(e)fn(e);};
+  set('marginRange',e=>{if(e.value!==String(marginPct))e.value=String(marginPct);e.setAttribute('aria-valuetext','경계 여백 '+fmtMargin(marginPct));});
+  set('marginVal',e=>{const t=fmtMargin(marginPct);if(e.textContent!==t)e.textContent=t;e.classList.toggle('on',marginPct!==0);});
+  set('marginSfx',e=>{if(e.textContent!==sfx)e.textContent=sfx;e.dataset.tone=tone;});
+  set('marginMinusBtn',e=>{e.disabled=marginPct<=MARGIN_MIN;});
+  set('marginPlusBtn',e=>{e.disabled=marginPct>=MARGIN_MAX;});
+  ctl.dataset.scope=scope;
+  ctl.title='경계 여백 — 자동으로 찾은 경계를 안쪽(−, 더 타이트) 또는 바깥쪽(+, 여유)으로 옮깁니다. 사진 원근에 맞춰 네 변이 균일하게 움직입니다.\n'
+    +'단축키 [ 안쪽 · ] 바깥 · 값을 더블클릭하면 0%'+(tips[scope]?'\n'+tips[scope]:'');
+}
+// 발표 안 사진을 여백 기준으로 나눈다: apply = 바꿀 사진, same = 이미 이 값, done = 완료 표시라 건너뜀(includeDone 이면 apply 에 들어감),
+// manual = 손댔거나 직접 지정, fresh = 아직 안 찾음, other = 자료·제외
+function marginPlan(folder,pct,includeDone){
+  const plan={apply:[],same:0,done:0,manual:0,fresh:0,other:0};
+  (DATA[folder]||[]).forEach(s=>{
+    const file=s.file;
+    if(isDeck(file)||statusFor(file).excluded){plan.other++;return;}
+    const k=trackedRotation(file);
+    if(k<0){if(isUntouchedCorners(file))plan.fresh++;else plan.manual++;return;}
+    const isDone=!!statusFor(file).done;
+    if(isDone&&!includeDone){plan.done++;return;}
+    const rec=autoRawStore[file];
+    const r=marginFromRecord(rec,pct,k);
+    if((rec.pct||0)===(r.ok?pct:0)&&sameCorners(r.corners,cornersStore[file])){plan.same++;return;}
+    plan.apply.push({file,rec,k,r});
+  });
+  return plan;
+}
+function applyMarginPlan(folder,plan,pct){
+  const items=[];
+  plan.apply.forEach(t=>{
+    items.push({file:t.file,prev:cloneCorners(cornersStore[t.file]),prevRec:JSON.parse(JSON.stringify(autoRawStore[t.file])),applied:t.r.corners});
+    cornersStore[t.file]=t.r.corners;
+    autoRawStore[t.file]={...t.rec,pct:t.r.ok?pct:0};
+    syncAutoUndo(t.file);
+  });
+  if(!items.length)return 0;
+  writeStore(LS_CORNERS,cornersStore);writeStore(LS_AUTORAW,autoRawStore);
+  const cur=currentSlide();
+  if(cur&&items.some(it=>it.file===cur.file)){positionHandles();scheduleRender();}
+  renderNav();
+  const clamped=plan.apply.filter(t=>t.r.clamped).length;
+  toast(`«${folder}» ${items.length}장에 경계 여백 ${fmtMargin(pct)}를 적용했습니다`+(clamped?` (${clamped}장은 사진 가장자리에서 잘림)`:''),9000,
+    {label:'되돌리기',onClick:()=>undoMarginApply(items)});
+  updateAutoDetectUi();
+  return items.length;
+}
+function undoMarginApply(items){
+  let n=0,kept=0;
+  items.forEach(it=>{
+    if(!sameCorners(cornersStore[it.file],it.applied)){kept++;return;}   // 그 뒤 손으로 고친 사진은 그대로 둔다
+    cornersStore[it.file]=it.prev;autoRawStore[it.file]=it.prevRec;
+    syncAutoUndo(it.file);n++;
+  });
+  writeStore(LS_CORNERS,cornersStore);writeStore(LS_AUTORAW,autoRawStore);
+  if(currentSlide()){positionHandles();scheduleRender();}
+  renderNav();updateAutoDetectUi();
+  toast(`경계 여백 적용을 되돌렸습니다 (${n}장${kept?`, 그 뒤 직접 고친 ${kept}장은 그대로`:''})`);
+}
+function confirmApplyMarginGroup(){
+  if(modalOpen()||!curFolder)return;
+  const folder=curFolder,pct=marginPct;
+  const root=document.createElement('div');
+  const lead=document.createElement('p');lead.style.margin='0 0 var(--s2)';
+  const list=document.createElement('ul');list.style.cssText='margin:0 0 var(--s2);padding-left:var(--s3);color:var(--text-2)';
+  const lab=document.createElement('label');lab.style.cssText='display:none;align-items:center;gap:var(--s1);margin:0 0 var(--s2);cursor:pointer';
+  const cb=document.createElement('input');cb.type='checkbox';lab.appendChild(cb);
+  const lt=document.createElement('span');lab.appendChild(lt);
+  const note=document.createElement('p');note.className='muted';note.style.margin='0';
+  note.textContent='적용한 뒤 알림의 [되돌리기]로 한 번에 원래대로 돌릴 수 있습니다.';
+  root.append(lead,list,lab,note);
+  let handle=null;
+  const refresh=()=>{
+    const plan=marginPlan(folder,pct,cb.checked),plain=marginPlan(folder,pct,false);
+    lead.innerHTML=`<b>${esc(folder)}</b> 발표에서 자동으로 찾은 뒤 손대지 않은 사진에 경계 여백 <b>${fmtMargin(pct)}</b>를 적용합니다.`;
+    const rows=[`<b>${plan.apply.length}장</b> 새로 적용`];
+    if(plan.same)rows.push(`${plan.same}장은 이미 이 여백이라 그대로`);
+    if(!cb.checked&&plain.done)rows.push(`완료 표시한 ${plain.done}장은 건너뜀`);
+    if(plan.manual)rows.push(`손으로 고쳤거나 직접 지정한 ${plan.manual}장은 건너뜀`);
+    if(plan.fresh)rows.push(`아직 자동으로 찾지 않은 ${plan.fresh}장은 해당 없음`);
+    list.innerHTML=rows.map(t=>`<li>${t}</li>`).join('');
+    lab.style.display=plain.done?'flex':'none';
+    lt.textContent=`완료 표시한 ${plain.done}장도 함께 적용`;
+    if(handle){handle.okBtn.disabled=!plan.apply.length;handle.okBtn.textContent=plan.apply.length?`${plan.apply.length}장에 적용`:'적용할 사진 없음';}
+  };
+  cb.addEventListener('change',refresh);
+  handle=openModal({title:'자동 찾은 사진에 여백 적용',node:root,ok:'적용',okKind:'primary',
+    onOk:()=>{const plan=marginPlan(folder,pct,cb.checked);applyMarginPlan(folder,plan,pct);}});
+  refresh();
+}
+function openMarginMenu(anchor){
+  const slide=currentSlide();
+  const file=slide&&slide.file,scope=marginScope(file);
+  const plan=curFolder?marginPlan(curFolder,marginPct,true):{apply:[]};
+  const curOff=scope==='tracked'&&(autoRawStore[file].pct||0)!==marginPct;
+  openMenu({anchor,label:'경계 여백 메뉴',focusFirst:true,items:[
+    {label:'이 사진에 지금 여백 적용',disabled:!curOff,title:curOff?'':(scope==='tracked'?'이 사진은 이미 지금 여백입니다':'자동으로 찾은 사진에서만 쓸 수 있습니다'),onClick:()=>{if(applyMarginToCurrent(true))updateMarginUi();}},
+    {label:'이 발표의 자동 찾은 사진에 적용…',disabled:!plan.apply.length,title:plan.apply.length?`이 발표에서 자동으로 찾은 뒤 손대지 않은 사진 중 ${plan.apply.length}장에 지금 여백을 적용합니다 (완료 표시한 사진 포함 기준)`:'지금 여백을 새로 적용할 자동 찾은 사진이 이 발표에 없습니다',onClick:confirmApplyMarginGroup},
+    {sep:true},
+    {label:'여백 0%로 되돌리기',kbd:'더블클릭',disabled:marginPct===0,onClick:()=>setMarginPct(0)}
+  ]});
+}
+(function initMarginCtl(){
+  const $=id=>document.getElementById(id);
+  const range=$('marginRange');
+  if(range){
+    range.addEventListener('input',()=>setMarginPct(range.value));
+    range.addEventListener('dblclick',()=>setMarginPct(0));
+  }
+  const val=$('marginVal');if(val)val.addEventListener('dblclick',()=>setMarginPct(0));
+  // − + 버튼은 누르고 있으면 반복한다(누름 시작 = 한 칸, 0.4초 넘게 누르면 계속)
+  [['marginMinusBtn',-1],['marginPlusBtn',1]].forEach(([id,dir])=>{
+    const b=$(id);if(!b)return;
+    let timer=null,rep=null,held=false;
+    const stop=()=>{clearTimeout(timer);clearInterval(rep);timer=rep=null;};
+    b.addEventListener('mousedown',e=>{
+      if(e.button!==0)return;
+      held=false;
+      timer=setTimeout(()=>{held=true;rep=setInterval(()=>stepMargin(dir),110);},420);
+    });
+    ['mouseup','mouseleave','blur'].forEach(ev=>b.addEventListener(ev,stop));
+    b.addEventListener('click',()=>{if(held){held=false;return;}stepMargin(dir);});   // 키보드(Enter·Space)도 click 으로 들어온다
+  });
+  const menu=$('marginMenuBtn');if(menu)menu.addEventListener('click',()=>openMarginMenu(menu));
+})();
 
 function origFolderOf(file){for(const f of folderNames){if((RAW_DATA[f]||[]).some(s=>s.file===file))return f;}return null;}
 function moveSlideToFolder(file,targetFolder){
@@ -1994,7 +2330,8 @@ function startGroupRename(folder){
 function resetCorners(){
   const slide=currentSlide();if(!slide)return;
   delete cornersStore[slide.file];
-  writeStore(LS_CORNERS,cornersStore);
+  delete autoRawStore[slide.file];
+  writeStore(LS_CORNERS,cornersStore);writeStore(LS_AUTORAW,autoRawStore);
   if(clearReview(slide.file)){updateStatusUi();renderNav();}
   syncStageRot();layoutStage();
   positionHandles();scheduleRender();
@@ -2048,6 +2385,9 @@ document.addEventListener('keydown',e=>{
   if(e.key==='ArrowUp'){e.preventDefault();moveSlide(-1);}
   if(!e.metaKey&&!e.ctrlKey&&!e.altKey){
     if(e.key==='n'||e.key==='N'){e.preventDefault();nextAttention();}
+    if(!e.shiftKey&&!colorMode&&(e.code==='BracketLeft'||e.code==='BracketRight'||e.key==='['||e.key===']')&&currentSlide()&&!isDeck(currentSlide().file)){
+      e.preventDefault();stepMargin((e.code==='BracketRight'||e.key===']')?1:-1);
+    }
     if(e.key==='?'){e.preventDefault();showShortcutHelp();}
     if(e.key==='Escape'&&selectedIdx.size&&!popMenu){selectedIdx.clear();lastClickedIdx=null;renderNav();}
   }
@@ -2095,10 +2435,12 @@ function imageRect(){
   return {w:stage.clientWidth,h:stage.clientHeight};
 }
 
-function positionHandles(){
+// override = 여백 애니메이션 중간 프레임(원본 사진 좌표 4점). 없으면 저장된 경계로 그리고 애니메이션을 끝낸다.
+function positionHandles(override){
   const slide=currentSlide();if(!slide)return;
+  if(!override)marginTween=null;
   // 화면 회전만큼 돌린 좌표에 얹는다 — 사진과 지정한 모서리가 늘 같이 돈다.
-  const corners=getCorners(slide.file).map(p=>toDisp(p,stageRot));
+  const corners=(override||getCorners(slide.file)).map(p=>toDisp(p,stageRot));
   document.querySelectorAll('.cornerHandle').forEach(h=>{
     const p=corners[+h.dataset.idx];
     h.style.left=(p[0]*100)+'%';
@@ -2110,6 +2452,7 @@ function positionHandles(){
     h.style.top=(((a[1]+b[1])/2)*100)+'%';
   });
   drawQuad(corners);
+  if(!override)updateMarginUi();   // 손잡이를 끌어 손댄 사진이 되면 여백 표시(이 사진은 그대로)도 따라간다
 }
 
 function drawQuad(corners){
@@ -3100,6 +3443,7 @@ const SHORTCUTS=[
     [['Delete','Backspace'],'이 사진 제외 (다시 누르면 해제) · 여러 장을 골랐다면 선택한 사진 제외'],
     [['⌘C','Ctrl+C'],'경계 복사'],
     [['⌘V','Ctrl+V'],'경계 붙여넣기'],
+    [['[',']'],'경계 여백을 안쪽 / 바깥쪽으로 0.5%씩 (경계 탭 · 자동으로 찾은 사진은 바로 반영)'],
     [['⌘Z','Ctrl+Z'],'색보정 되돌리기 (색보정 탭)'],
     [['B'],'보정 전 원본과 비교 (색보정 탭)'],
     [['R'],'색보정 원래대로 (색보정 탭)'],
