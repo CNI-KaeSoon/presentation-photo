@@ -58,6 +58,10 @@ MAX_WIDTH = 20_000
 MAX_OUTPUT_PIXELS = 100_000_000
 MIN_RATIO = 0.05
 MAX_RATIO = 20.0
+FULL_FRAME_CORNERS = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+IMAGE_EXTS = (".jpg", ".jpeg", ".png")   # gen_manifest.py 가 화면 목록에 올리는 확장자와 같다
+SUMMARY_PREFIX = "@@PDF_SUMMARY@@ "       # 서버가 잡 결과로 읽는 기계용 한 줄(화면 로그에는 안 나옴)
+DECK_RE = re.compile(r"^DECK\d*_p\d+\.[a-z]+$", re.IGNORECASE)   # index.html isDeck() 와 같은 규약
 BACKUP_FIELDS = (
     "slideCorners_v1",
     "slideStatus_v1",
@@ -69,6 +73,11 @@ BACKUP_FIELDS = (
 
 def natural_key(s: str):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+
+
+def is_deck(fname: str) -> bool:
+    """발표자료(DECK<세션>_p<쪽>.jpg) 쪽 판별. 화면과 같은 규약이다."""
+    return bool(DECK_RE.match(str(fname or "")))
 
 
 def is_single_basename(value) -> bool:
@@ -161,7 +170,7 @@ def load_backup(path):
     for key, value in corners.items():
         normalized = validate_corners(value)
         if normalized is None:
-            print(f"⚠️ 코너 값 거부 — 항목 건너뜀: {key!r}", file=sys.stderr)
+            print(f"⚠️ 코너 값 거부 — 저장된 모서리를 버림(사진이 폴더에 있으면 전체 프레임으로 넣음): {key!r}", file=sys.stderr)
             continue
         clean_corners[key] = normalized
 
@@ -173,6 +182,128 @@ def load_backup(path):
             continue
         clean_ratios[key] = ratio
     return clean_corners, status, clean_ratios, moves, colors
+
+
+def load_photo_order(path) -> dict[str, list[str]]:
+    """백업 JSON 의 `_photoOrder`({그룹: [이미지 키…]}) → 그룹별 화면 최종 순서.
+
+    브라우저가 export 요청에 실어 보낸 화면 순서(촬영순 seq + 사용자 지정 slideOrder + 이동 반영)이다.
+    값은 조회용 문자열일 뿐 경로로 쓰지 않는다. 없거나 형식이 틀리면 빈 dict(=대체 순서 사용).
+    """
+    try:
+        with Path(path).expanduser().open(encoding="utf-8") as fh:
+            raw = json.load(fh).get("_photoOrder")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    order: dict[str, list[str]] = {}
+    total = 0
+    for group, keys in raw.items():
+        if not isinstance(group, str) or not isinstance(keys, list):
+            continue
+        clean = [nfc(k) for k in keys if isinstance(k, str)]
+        total += len(clean)
+        if total > MAX_SLIDES:
+            print("⚠️ _photoOrder 항목 수가 상한을 넘어 무시한다", file=sys.stderr)
+            return {}
+        order[nfc(group)] = clean
+    return order
+
+
+def load_backup_order(path) -> dict[str, list[str]]:
+    """백업에 든 slideOrder_v1(폴더 안 사용자 지정 순서). 대체 순서 계산용."""
+    try:
+        with Path(path).expanduser().open(encoding="utf-8") as fh:
+            raw = json.load(fh)["data"].get("slideOrder_v1")
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {nfc(g): [nfc(k) for k in v if isinstance(k, str)]
+            for g, v in parsed.items() if isinstance(g, str) and isinstance(v, list)}
+
+
+def load_plan_seq(root: Path) -> dict[str, dict[str, int]]:
+    """worktree.json 의 {폴더: {파일 stem: 순번}} — gen_manifest.load_plan_order 와 같은 값."""
+    try:
+        raw = json.loads((root / "worktree.json").read_text(encoding="utf-8"))
+        groups = raw.get("groups") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for folder, files in groups.items():
+        if isinstance(folder, str) and isinstance(files, list):
+            out[nfc(folder)] = {nfc(Path(str(f)).stem): i for i, f in enumerate(files)}
+    return out
+
+
+def scan_group_images(root: Path) -> list[tuple[str, str]]:
+    """작업장의 모든 그룹 img 폴더 사진 → [(그룹, 파일명)] (NFC).
+
+    화면 목록(gen_manifest.py)과 같은 기준: `<그룹>/img/` 가 있는 직계 폴더(slide_tool 제외),
+    jpg·jpeg·png. 점으로 시작하는 파일(macOS ._ 등)과 이름이 위험한 파일은 건너뛴다.
+    """
+    found: list[tuple[str, str]] = []
+    try:
+        children = sorted(root.iterdir(), key=lambda p: natural_key(p.name))
+    except OSError:
+        return found
+    for child in children:
+        img_dir = child / "img"
+        if child.name == "slide_tool" or not img_dir.is_dir():
+            continue
+        if not is_single_basename(child.name) or child.name.startswith("."):
+            continue
+        try:
+            if not is_within(child.resolve(), root):
+                continue
+            files = sorted(img_dir.iterdir(), key=lambda p: natural_key(p.name))
+        except OSError:
+            continue
+        for f in files:
+            if (f.name.startswith(".") or not is_single_basename(f.name)
+                    or f.suffix.lower() not in IMAGE_EXTS or not f.is_file()):
+                continue
+            found.append((nfc(child.name), nfc(f.name)))
+    return found
+
+
+def compute_seq(universe, plan_seq) -> dict[str, int]:
+    """화면의 seq 재현 — gen_manifest 가 원래 폴더별로 (계획 순번, 이름순) 으로 세운 위치.
+
+    필터(제외·완료본만) 전의 전체 목록으로 세워야 화면과 같은 값이 된다.
+    """
+    by_src: dict[str, list] = {}
+    for it in universe:
+        by_src.setdefault(it["src_folder"], []).append(it)
+    seq_of_key: dict[str, int] = {}
+    for src_folder, group_items in by_src.items():
+        plan = plan_seq.get(src_folder, {})
+        ranked = sorted(group_items, key=lambda it: (
+            plan.get(nfc(os.path.splitext(it["fname"])[0]), len(plan) + 1),
+            natural_key(it["fname"])))
+        for i, it in enumerate(ranked):
+            seq_of_key[it["key"]] = i
+    return seq_of_key
+
+
+def order_group_items(items, folder, explicit, user_order, seq_of_key):
+    """그룹 안 사진 순서를 화면(index.html buildData)과 같게 만든다.
+
+    1) 브라우저가 보낸 최종 순서(explicit)가 있으면 그대로 따르고, 목록에 없는 사진은 뒤에 이름순.
+    2) 없으면 화면 규칙을 재현: 촬영순(seq) → 사용자 지정 순서(slideOrder) → 이름순.
+    """
+    if explicit:
+        pos = {k: i for i, k in enumerate(explicit)}
+        items.sort(key=lambda it: (pos.get(it["key"], math.inf), natural_key(it["fname"])))
+        return
+    items.sort(key=lambda it: (seq_of_key.get(it["key"], math.inf), natural_key(it["fname"])))
+    want = user_order.get(folder)
+    if want:
+        pos = {k: i for i, k in enumerate(want)}
+        items.sort(key=lambda it: (pos.get(it["key"], math.inf), natural_key(it["fname"])))
 
 
 def is_excluded(status_val) -> bool:
@@ -329,6 +460,9 @@ def render_page(task: dict) -> tuple[int, np.ndarray | None, str | None]:
     img = read_image(path)
     if img is None:
         return idx, None, f"    ⚠️ 읽기 실패: {path}"
+    if task.get("deck"):
+        # 발표자료 쪽은 화면 캡처가 아니라 원본이다 — 원근·색·크롭 없이 그대로 넣는다.
+        return idx, img, None
     try:
         out = warp(img, task["corners"], task.get("ratio"), task["width"])
     except ValueError as exc:
@@ -388,10 +522,6 @@ def main():
         return 1
     print(f"백업: corners={len(corners)} status={len(status)} ratios={len(ratios)} "
           f"moves={len(moves)} color={len(colors)}")
-    if not corners:
-        print("‼️ 코너 정보가 비어 있다 — 툴에서 '백업 내보내기'로 받은 파일이 맞는지 확인하라.",
-              file=sys.stderr)
-        return 1
 
     src_index, src_root = index_sources(a.src_dir)
     if a.src_dir:
@@ -404,10 +534,25 @@ def main():
                   f"   그냥 진행하면 그 사진들은 저해상도 축소본으로 대체된다.",
                   file=sys.stderr)
 
-    # ---- 백업 키를 폴더별로 묶는다 (화자/그룹 이동 override 반영) ----
-    by_folder = {}
-    excluded = skipped_notdone = 0
+    root = Path(a.root).expanduser().resolve()
+    # 백업 키는 NFC 로 맞춰 비교한다(macOS 파일시스템은 NFD 로 저장).
+    def _nfc_keys(d):
+        return {nfc(k) if isinstance(k, str) else k: v for k, v in d.items()}
+    corners, status, ratios, moves, colors = (
+        _nfc_keys(d) for d in (corners, status, ratios, moves, colors))
+
+    # ---- 대상 사진 = 그룹 img 폴더의 모든 사진 + 백업에 모서리가 있는 사진 ----
+    # 모서리를 한 번도 손대지 않은 사진도 PDF 에 들어간다(전체 프레임). 예전에는
+    # 모서리 키가 있는 사진만 돌아서 미지정 사진이 조용히 빠졌다.
+    universe = {}                       # key → dict(key, fname, src_folder, deck)
+    disk_groups = set()
+    for grp, fname in scan_group_images(root):
+        key = f"../{grp}/img/{fname}"
+        disk_groups.add(grp)
+        universe[key] = dict(key=key, fname=fname, src_folder=grp, deck=is_deck(fname))
     for key in corners:
+        if key in universe:
+            continue
         if not isinstance(key, str):
             print(f"⚠️ 백업 키 거부 — 문자열이 아님: {key!r}", file=sys.stderr)
             continue
@@ -419,27 +564,41 @@ def main():
         if not is_single_basename(raw_src_folder) or not is_single_basename(raw_fname):
             print(f"⚠️ 백업 키 거부 — 단일 폴더명·파일명이 아님: {key!r}", file=sys.stderr)
             continue
+        universe[key] = dict(key=key, fname=nfc(raw_fname), src_folder=nfc(raw_src_folder),
+                             deck=is_deck(raw_fname))
+    if not universe:
+        print("‼️ 내보낼 사진이 없다 — 작업장 그룹 폴더(<그룹>/img)에 사진이 있는지, "
+              "백업 파일이 맞는지 확인하라.", file=sys.stderr)
+        return 1
+    seq_of_key = compute_seq(universe.values(), load_plan_seq(root))
+    photo_order = load_photo_order(a.backup)
+    user_order = load_backup_order(a.backup) if not photo_order else {}
+    if photo_order:
+        print(f"화면 순서 사용: 그룹 {len(photo_order)}개")
+
+    # ---- 폴더별로 묶는다 (화자/그룹 이동 override 반영) ----
+    by_folder = {}
+    excluded = skipped_notdone = 0
+    for key, it in universe.items():
         st = status.get(key, {})
         if is_excluded(st):
             excluded += 1
             continue
-        if a.only_done and not is_done(st):
+        # 발표자료 쪽은 완료 표시 대상이 아니다 — `완료본만`에서도 항상 넣는다.
+        if a.only_done and not it["deck"] and not is_done(st):
             skipped_notdone += 1
             continue
-        src_folder = nfc(raw_src_folder)
-        fname = nfc(raw_fname)
         move = moves.get(key)
         if move is None:
-            folder = src_folder
+            folder = it["src_folder"]
         elif not is_single_basename(move):
             print(f"⚠️ 이동 폴더명 거부 — 원래 폴더 사용: {move!r}", file=sys.stderr)
-            folder = src_folder
+            folder = it["src_folder"]
         else:
             folder = nfc(move)
-        by_folder.setdefault(folder, []).append(
-            dict(key=key, fname=fname, src_folder=src_folder))
+        by_folder.setdefault(folder, []).append(it)
     for f in by_folder:
-        by_folder[f].sort(key=lambda it: natural_key(it["fname"]))
+        order_group_items(by_folder[f], f, photo_order.get(f), user_order, seq_of_key)
     print(f"폴더 {len(by_folder)}개 (제외 {excluded}"
           + (f", 미완료 건너뜀 {skipped_notdone}" if a.only_done else "") + ")")
 
@@ -450,7 +609,6 @@ def main():
     except OSError as exc:
         print(f"‼️ 출력 폴더를 준비할 수 없다: {exc}", file=sys.stderr)
         return 1
-    root = Path(a.root).expanduser().resolve()
     summary, made = [], {}
     missing_total = 0
 
@@ -475,15 +633,22 @@ def main():
     for folder in folders:
         for idx, it in enumerate(by_folder[folder]):
             key, fname = it["key"], it["fname"]
-            path, _kind = resolve_source(fname, src_index, src_root)
-            if path is None:
-                # 원본을 못 찾으면 툴이 쓰던 작업용 이미지로 폴백
+            if it["deck"]:
+                # 발표자료는 화면에서 보던 작업 폴더 쪽 이미지를 그대로 쓴다.
                 path = resolve_fallback(root, it["src_folder"], fname)
+                if path is None:
+                    path, _kind = resolve_source(fname, src_index, src_root)
+            else:
+                path, _kind = resolve_source(fname, src_index, src_root)
+                if path is None:
+                    # 원본을 못 찾으면 툴이 쓰던 작업용 이미지로 폴백
+                    path = resolve_fallback(root, it["src_folder"], fname)
             tasks.append(dict(
                 folder=folder,
                 idx=idx,
+                deck=it["deck"],
                 path=path,
-                corners=corners[key],
+                corners=corners.get(key) or FULL_FRAME_CORNERS,
                 ratio=ratios.get(key),
                 width=a.width,
                 inset=a.inset,
@@ -543,6 +708,18 @@ def main():
         print(f"  {folder:40s} {n:4d}쪽  색보정 {nm:4d}"
               + (f"  ⚠️실패 {miss}" if miss else ""))
     print(f"  {'합계':40s} {total:4d}쪽")
+    # 화면 결과 요약용 기계 한 줄: 그룹별 쪽 수와 한 쪽도 못 만든 그룹.
+    pages_of = {folder: n for folder, n, _nm, _miss in summary}
+    failed_of = {folder: miss for folder, _n, _nm, miss in summary}
+    names = sorted(({*disk_groups, *by_folder} if not a.only
+                    else {f for f in {*disk_groups, *by_folder} if f in a.only}),
+                   key=natural_key)
+    groups_report = [dict(name=f, pages=pages_of.get(f, 0), failed=failed_of.get(f, 0))
+                     for f in names]
+    print(SUMMARY_PREFIX + json.dumps(dict(
+        groups=groups_report,
+        emptyGroups=[g["name"] for g in groups_report if g["pages"] == 0],
+        total=total, onlyDone=bool(a.only_done)), ensure_ascii=False))
     if missing_total:
         print(f"\n⚠️ 원본을 못 찾거나 읽지 못한 사진 {missing_total}장 — "
               f"--src-dir 경로와 파일명(확장자 제외)이 툴에 넣은 것과 같은지 확인하라.",

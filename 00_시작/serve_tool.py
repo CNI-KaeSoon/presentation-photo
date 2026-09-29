@@ -62,6 +62,12 @@ AUTO_DETECT_TIMEOUT = 120
 AUTO_DETECT_REVIEW_BELOW = 0.5
 AUTO_DETECT_EXTS = (".jpg", ".jpeg", ".png")
 STREAM_CHUNK_BYTES = 1024 * 1024
+# export_pdf.py 가 끝에 찍는 기계용 요약 한 줄의 머리말(같은 값 — 테스트가 일치를 확인한다).
+PDF_SUMMARY_PREFIX = "@@PDF_SUMMARY@@ "
+# 업로드 사진의 수정 시각(File.lastModified, epoch ms)으로 받아들이는 범위.
+MIN_LAST_MODIFIED_MS = 946_684_800_000          # 2000-01-01
+MAX_PHOTO_ORDER_ITEMS = 20_000
+MAX_PHOTO_ORDER_KEY_CHARS = 1024
 WINDOWS_RESERVED = frozenset(
     {"con", "prn", "aux", "nul"}
     | {f"com{number}" for number in range(1, 10)}
@@ -256,6 +262,48 @@ def safe_group_name(raw: object) -> tuple[Optional[str], str]:
     return value, ""
 
 
+def parse_last_modified(raw: object) -> Optional[float]:
+    """브라우저 File.lastModified(epoch ms 정수 문자열) → epoch 초. 이상하면 None(무시).
+
+    숫자 형식·범위(2000-01-01 ~ 지금+1일)를 벗어난 값은 시각으로 쓰지 않는다.
+    """
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,16}", raw.strip()):
+        return None
+    millis = int(raw.strip())
+    if millis < MIN_LAST_MODIFIED_MS or millis > (time.time() + 86400) * 1000:
+        return None
+    return millis / 1000.0
+
+
+def sanitize_photo_order(raw: object) -> tuple[Optional[dict[str, list[str]]], str]:
+    """브라우저가 보낸 그룹별 최종 사진 순서 {그룹: [이미지 키…]} 를 검증한다.
+
+    값은 export_pdf 가 조회용 문자열로만 쓰고 경로로 열지 않는다. 그래도 크기·형식은 제한한다.
+    """
+    if not isinstance(raw, dict):
+        return None, "photoOrder는 그룹별 이미지 키 배열을 담은 객체여야 합니다."
+    clean: dict[str, list[str]] = {}
+    total = 0
+    for group, keys in raw.items():
+        if not isinstance(group, str) or not group or len(group) > MAX_PHOTO_ORDER_KEY_CHARS:
+            return None, "photoOrder의 그룹 이름이 올바르지 않습니다."
+        if not isinstance(keys, list):
+            return None, "photoOrder의 값은 이미지 키 배열이어야 합니다."
+        total += len(keys)
+        if total > MAX_PHOTO_ORDER_ITEMS:
+            return None, "photoOrder 항목이 너무 많습니다."
+        for key in keys:
+            if (
+                not isinstance(key, str)
+                or not key
+                or len(key) > MAX_PHOTO_ORDER_KEY_CHARS
+                or "\x00" in key
+            ):
+                return None, "photoOrder의 이미지 키가 올바르지 않습니다."
+        clean[group] = list(keys)
+    return clean, ""
+
+
 def is_within(path: Path, root: Path) -> bool:
     """resolve 된 경로가 root 안(자신 포함)인지 확인한다. export_pdf.is_within 과 같은 판정."""
     try:
@@ -328,6 +376,7 @@ class Job:
         self.phase_name = "대기"
         self.started_at = time.time()
         self.exit_code: Optional[int] = None
+        self.result: Optional[dict[str, object]] = None   # export 의 그룹별 쪽 수 요약
         self.cancel_requested = False
         self.finished = threading.Event()
         self.lock = threading.Lock()
@@ -336,6 +385,16 @@ class Job:
 
     def append_line(self, line: str) -> None:
         clean = str(line).rstrip("\r\n")
+        if clean.startswith(PDF_SUMMARY_PREFIX):
+            # 화면 로그에는 싣지 않고 잡 결과로만 보관한다. 깨진 줄은 조용히 버린다.
+            try:
+                parsed = json.loads(clean[len(PDF_SUMMARY_PREFIX):])
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                with self.lock:
+                    self.result = parsed
+            return
         with self.lock:
             self._seq += 1
             self._lines.append((self._seq, clean))
@@ -355,6 +414,8 @@ class Job:
             }
             if self.exit_code is not None:
                 result["exitCode"] = self.exit_code
+            if self.result is not None:
+                result["result"] = self.result
             return result
 
 
@@ -936,12 +997,23 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             except Exception:
                 final_path.unlink(missing_ok=True)
                 raise
+            # 화면에서 끌어 놓은 사진은 서버가 받은 시각이 수정 시각이 된다. EXIF 없는 사진은
+            # 수정 시각으로 촬영순·그룹을 나누므로, 브라우저가 알려 준 원래 수정 시각을 되돌린다.
+            mtime = parse_last_modified(self.headers.get("X-Last-Modified"))
+            mtime_applied = False
+            if mtime is not None:
+                try:
+                    os.utime(final_path, (mtime, mtime))
+                    mtime_applied = True
+                except OSError:
+                    mtime_applied = False
             self._send_json(
                 {
                     "ok": True,
                     "saved": final_path.name,
                     "renamed": renamed,
                     "dedup": False,
+                    "mtimeApplied": mtime_applied,
                 }
             )
         except OSError as exc:
@@ -1286,6 +1358,12 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
         if not isinstance(order, list):
             self._error(400, "bad_order", "order는 그룹 이름 배열이여야 합니다.")
             return
+        photo_order: Optional[dict[str, list[str]]] = None
+        if payload.get("photoOrder") is not None:
+            photo_order, detail = sanitize_photo_order(payload.get("photoOrder"))
+            if photo_order is None:
+                self._error(400, "bad_photo_order", detail)
+                return
 
         existing_groups = self._export_group_names()
         normalized_order: list[str] = []
@@ -1325,6 +1403,9 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
         python, env = self._job_prerequisites()
         if python is None:
             return
+        if photo_order is not None:
+            # 화면 순서를 백업 사본에 실어 export_pdf 가 읽게 한다(백업 스키마 6키는 그대로).
+            backup = {**backup, "_photoOrder": photo_order}
         try:
             backup_path = self._save_backup(backup)
         except ValueError as exc:

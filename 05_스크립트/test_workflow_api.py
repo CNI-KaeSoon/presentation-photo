@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import io
 import importlib.util
 import json
 import os
@@ -710,6 +711,76 @@ def run_upload() -> list[bool]:
                 assert server_module.UPLOAD_EXTS == tuple(photo_io.ALL_EXTS)
 
             results.append(report("U7 업로드 확장자 상수 동기화", u7))
+
+            def upload_with_mtime(
+                name: str, content: bytes, last_modified: Optional[str]
+            ) -> tuple[int, dict[str, object]]:
+                headers = api_headers(base, token)
+                headers["X-Filename"] = name
+                if last_modified is not None:
+                    headers["X-Last-Modified"] = last_modified
+                status, _, raw = http_request(
+                    "POST", base + "/api/upload", headers=headers, body=content
+                )
+                return status, decode_json(raw)
+
+            def plain_jpeg(color: tuple[int, int, int]) -> bytes:
+                buffer = io.BytesIO()
+                Image.new("RGB", (64, 48), color).save(buffer, "JPEG")
+                return buffer.getvalue()
+
+            def u8() -> None:
+                # EXIF 없는 사진: 브라우저 File.lastModified 가 파일 수정 시각으로 남아야 한다.
+                wanted_ms = 1_700_000_000_000          # 2023-11-14
+                status, payload = upload_with_mtime(
+                    "NOEXIF_A.jpg", plain_jpeg((10, 20, 30)), str(wanted_ms)
+                )
+                assert status == 200 and payload.get("mtimeApplied") is True, payload
+                saved = src / str(payload["saved"])
+                assert abs(saved.stat().st_mtime - wanted_ms / 1000) < 1.0, saved.stat().st_mtime
+                # 시각이 다른 두 장은 촬영순 계산(photo_io.capture_time)에서도 그 차이가 살아 있다.
+                status, second = upload_with_mtime(
+                    "NOEXIF_B.jpg", plain_jpeg((30, 20, 10)), str(wanted_ms + 3_600_000)
+                )
+                assert status == 200 and second.get("mtimeApplied") is True, second
+                sys.path.insert(0, str(SCRIPT_DIR))
+                import photo_io
+
+                first_when, first_source = photo_io.capture_time(str(saved))
+                second_when, _ = photo_io.capture_time(str(src / str(second["saved"])))
+                assert first_source == "mtime", first_source
+                assert first_when is not None and second_when is not None
+                assert (second_when - first_when).total_seconds() == 3600, (first_when, second_when)
+
+            results.append(report("U8 업로드 lastModified → 수정 시각 적용", u8))
+
+            def u9() -> None:
+                before = time.time()
+                bad_values = (
+                    "abc",
+                    "-5",
+                    "1.5e12",
+                    "1700000000000.5",
+                    "",
+                    "0",                       # 1970 — 범위 밖
+                    "946684799999",            # 2000-01-01 직전 — 범위 밖
+                    "99999999999999999999",     # 자릿수 초과
+                    "9999999999999",           # 2286 — 미래
+                )
+                for index, bad in enumerate(bad_values):
+                    status, payload = upload_with_mtime(
+                        f"BADMTIME_{index}.jpg", plain_jpeg((index, 0, 0)), bad
+                    )
+                    # 시각만 무시하고 사진은 정상 저장한다.
+                    assert status == 200, (bad, status, payload)
+                    assert payload.get("mtimeApplied") is False, (bad, payload)
+                    saved = src / str(payload["saved"])
+                    assert saved.stat().st_mtime >= before - 5, (bad, saved.stat().st_mtime)
+                # 헤더가 아예 없어도 정상.
+                status, payload = upload_with_mtime("NOHEADER.jpg", plain_jpeg((1, 2, 3)), None)
+                assert status == 200 and payload.get("mtimeApplied") is False, payload
+
+            results.append(report("U9 잘못된 lastModified 는 무시하고 저장", u9))
         finally:
             for process in processes:
                 stop_process(process)
@@ -1137,6 +1208,300 @@ def run_export_modes() -> list[bool]:
     return results
 
 
+def pdf_page_count(path: Path) -> int:
+    """poppler pdfinfo 로 쪽 수를 읽는다(pdfunite 결과처럼 객체 스트림에 든 쪽도 센다)."""
+    pdfinfo = shutil.which("pdfinfo")
+    assert pdfinfo is not None, "쪽 수 검증에 필요한 pdfinfo(poppler)가 없습니다."
+    result = subprocess.run(
+        [pdfinfo, str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.strip()
+    for line in result.stdout.splitlines():
+        if line.startswith("Pages:"):
+            return int(line.split(":", 1)[1])
+    raise AssertionError(f"pdfinfo 에 Pages 줄이 없습니다: {result.stdout}")
+
+
+# 색으로 쪽을 식별한다(중앙 화소).
+MIX_COLORS = {
+    "A_1.jpg": (220, 30, 30),          # 빨강
+    "A_2.jpg": (30, 200, 30),          # 초록
+    "A_3.jpg": (30, 30, 220),          # 파랑
+    "DECK05_p001.jpg": (220, 220, 30),  # 노랑 — 발표자료 쪽
+}
+
+
+def color_name(rgb: tuple[int, int, int]) -> str:
+    red, green, blue = rgb
+    if red > 150 and green > 150 and blue < 120:
+        return "deck"
+    if green > 150 and blue > 150:
+        return "B_1"
+    if red > 150 and green < 100:
+        return "A_1"
+    if green > 150 and red < 100:
+        return "A_2"
+    if blue > 150 and red < 100:
+        return "A_3"
+    return f"?{rgb}"
+
+
+def make_mix_groups(pkg: Path, plan_order: Optional[list[str]] = None) -> tuple[str, str]:
+    """모서리 없는 사진 3장 + 발표자료 1쪽이 든 그룹과, 사진 1장뿐인 둘째 그룹을 만든다.
+
+    발표자료(DECK05_p001.jpg)는 원본 폴더에 없고 작업 폴더 img 에만 있다(실사용과 같다).
+    """
+    mix, other = "01_MIX", "02_B"
+    src = pkg / "01_원본사진"
+    work = pkg / "02_작업장"
+    for group in (mix, other):
+        (work / group / "img").mkdir(parents=True, exist_ok=True)
+    for name, color in MIX_COLORS.items():
+        Image.new("RGB", (160, 120), color).save(work / mix / "img" / name)
+        if not name.startswith("DECK"):
+            Image.new("RGB", (160, 120), color).save(src / name)
+    Image.new("RGB", (160, 120), (30, 220, 220)).save(work / other / "img" / "B_1.jpg")
+    Image.new("RGB", (160, 120), (30, 220, 220)).save(src / "B_1.jpg")
+    write_mix_plan(pkg, plan_order)
+    return mix, other
+
+
+def write_mix_plan(pkg: Path, plan_order: Optional[list[str]] = None) -> None:
+    plan = {
+        "_type": "slide_tool_worktree",
+        "_version": 2,
+        "root": ".",
+        "source": "../01_원본사진",
+        "groups": {
+            "01_MIX": plan_order or ["A_1.jpg", "A_2.jpg", "A_3.jpg", "DECK05_p001.jpg"],
+            "02_B": ["B_1.jpg"],
+        },
+    }
+    (pkg / "02_작업장" / "worktree.json").write_text(
+        json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, str(pkg / "02_작업장" / "slide_tool" / "gen_manifest.py")],
+        cwd=pkg,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout + result.stderr).strip()
+
+
+def mix_key(name: str, group: str = "01_MIX") -> str:
+    return f"../{group}/img/{name}"
+
+
+def page_names(path: Path) -> list[str]:
+    count = pdf_page_count(path)
+    return [color_name(color) for color in pdf_page_colors(path, count)]
+
+
+def expect_pages(path: Path, expected: list[str]) -> None:
+    actual = page_names(path)
+    assert actual == expected, f"{path.name}: 기대 {expected} 실제 {actual}"
+
+
+def export_request(
+    base: str, token: str, request: dict[str, object], timeout: float = 90
+) -> dict[str, object]:
+    status, _, payload = json_post(base, "/api/export-pdf", token, request)
+    assert status == 202, payload
+    job = wait_job(base, token, timeout)
+    assert job.get("state") == "done", job_log(job)
+    return job
+
+
+def run_export_regress() -> list[bool]:
+    """PDF 결과 정확성 회귀: 모서리 없는 사진·발표자료·화면 순서·쪽 수 요약."""
+    results: list[bool] = []
+    processes: list[subprocess.Popen[str]] = []
+    with tempfile.TemporaryDirectory(prefix="workflow_export_regress_") as temp_dir:
+        temp = Path(temp_dir)
+
+        def setup_case(
+            name: str, plan_order: Optional[list[str]] = None
+        ) -> tuple[Path, str, str]:
+            pkg = make_pkg(temp / name)
+            make_mix_groups(pkg, plan_order)
+            _, base, token = start_server(pkg, processes)
+            return pkg, base, token
+
+        def r1() -> None:
+            # 모서리는 A_1 에만 있다. A_2·A_3·발표자료도 PDF 에 들어가야 하고 제외만 빠진다.
+            pkg, base, token = setup_case("untouched")
+            backup = make_backup([mix_key("A_1.jpg")])
+            job = export_request(base, token, {"backup": backup, "mode": "per-folder"})
+            mix_pdf = pkg / "03_결과물" / "01_MIX.pdf"
+            expect_pages(mix_pdf, ["A_1", "A_2", "A_3", "deck"])
+            assert (pkg / "03_결과물" / "02_B.pdf").is_file(), "손대지 않은 둘째 그룹 PDF 없음"
+            groups = {g["name"]: g["pages"] for g in job["result"]["groups"]}
+            assert groups == {"01_MIX": 4, "02_B": 1}, job["result"]
+            assert job["result"]["emptyGroups"] == [], job["result"]
+
+            excluded = make_backup(
+                [mix_key("A_1.jpg")],
+                statuses={mix_key("A_2.jpg"): {"excluded": True}},
+            )
+            export_request(base, token, {"backup": excluded, "mode": "per-folder"})
+            expect_pages(mix_pdf, ["A_1", "A_3", "deck"])
+
+        results.append(report("R1 모서리 없는 사진도 PDF 포함·제외만 빠짐·그룹별 쪽 수", r1))
+
+        def r2() -> None:
+            # 완료본만: 발표자료는 완료 표시 없이도 남고, 미완료 그룹은 요약에 빠진 그룹으로 나온다.
+            pkg, base, token = setup_case("deck_modes")
+            done = make_backup(
+                [mix_key("A_1.jpg")],
+                statuses={mix_key("A_1.jpg"): {"done": True}},
+            )
+            out = pkg / "03_결과물"
+            groups = ["01_MIX", "02_B"]
+
+            job = export_request(
+                base, token, {"backup": done, "mode": "per-folder", "onlyDone": True}
+            )
+            expect_pages(out / "01_MIX.pdf", ["A_1", "deck"])
+            assert not (out / "02_B.pdf").exists()
+            assert job["result"]["emptyGroups"] == ["02_B"], job["result"]
+
+            job = export_request(
+                base, token, {"backup": done, "mode": "merged", "onlyDone": True}
+            )
+            expect_pages(out / "전체.pdf", ["A_1", "deck"])
+            expect_pages(out / "01_MIX.pdf", ["A_1", "deck"])
+
+            export_request(
+                base,
+                token,
+                {"backup": done, "mode": "ordered", "order": groups, "onlyDone": True},
+            )
+            expect_pages(out / "전체.pdf", ["A_1", "deck"])
+            # 완료본만이 아닐 때는 모든 방식에서 4+1쪽(발표자료 포함).
+            everything = make_backup([mix_key("A_1.jpg")])
+            export_request(base, token, {"backup": everything, "mode": "merged"})
+            expect_pages(out / "전체.pdf", ["A_1", "A_2", "A_3", "deck", "B_1"])
+            export_request(
+                base,
+                token,
+                {"backup": everything, "mode": "ordered", "order": list(reversed(groups))},
+            )
+            expect_pages(out / "전체.pdf", ["B_1", "A_1", "A_2", "A_3", "deck"])
+
+        results.append(report("R2 DECK 쪽이 그룹별·통합·지정 순서·완료본만에서 모두 포함", r2))
+
+        def r3() -> None:
+            # 화면 순서: 브라우저가 보낸 그룹별 최종 순서가 파일명 정렬보다 우선한다.
+            pkg, base, token = setup_case("photo_order")
+            backup = make_backup([mix_key("A_1.jpg")])
+            out = pkg / "03_결과물"
+            wanted = [
+                mix_key("A_3.jpg"),
+                mix_key("DECK05_p001.jpg"),
+                mix_key("A_1.jpg"),
+                mix_key("A_2.jpg"),
+            ]
+            job = export_request(
+                base,
+                token,
+                {"backup": backup, "mode": "per-folder", "photoOrder": {"01_MIX": wanted}},
+            )
+            expect_pages(out / "01_MIX.pdf", ["A_3", "deck", "A_1", "A_2"])
+            assert "화면 순서 사용" in job_log(job)
+            # 통합 방식에서도 같은 순서로 이어 붙는다.
+            export_request(
+                base,
+                token,
+                {"backup": backup, "mode": "merged", "photoOrder": {"01_MIX": wanted}},
+            )
+            expect_pages(out / "전체.pdf", ["A_3", "deck", "A_1", "A_2", "B_1"])
+            # 목록에 없는 사진(새로 들어온 것)은 뒤에 이름순으로 붙는다.
+            export_request(
+                base,
+                token,
+                {
+                    "backup": backup,
+                    "mode": "per-folder",
+                    "photoOrder": {"01_MIX": [mix_key("A_2.jpg")]},
+                },
+            )
+            expect_pages(out / "01_MIX.pdf", ["A_2", "A_1", "A_3", "deck"])
+
+        results.append(report("R3 PDF 쪽 순서 = 화면이 보낸 그룹별 최종 순서", r3))
+
+        def r4() -> None:
+            # photoOrder 없이(옛 화면·CLI) 불러도 화면 규칙(촬영순 seq → 백업 slideOrder)을 재현한다.
+            # 계획 순서가 파일명 순서와 다른 세션(카운터 롤오버)을 흉내낸다.
+            pkg, base, token = setup_case(
+                "fallback_order", ["A_3.jpg", "A_1.jpg", "A_2.jpg", "DECK05_p001.jpg"]
+            )
+            out = pkg / "03_결과물"
+            backup = make_backup([mix_key("A_1.jpg")])
+            export_request(base, token, {"backup": backup, "mode": "per-folder"})
+            expect_pages(out / "01_MIX.pdf", ["A_3", "A_1", "A_2", "deck"])
+
+            with_user_order = make_backup([mix_key("A_1.jpg")])
+            data = with_user_order["data"]
+            assert isinstance(data, dict)
+            data["slideOrder_v1"] = json.dumps(
+                {"01_MIX": [mix_key("DECK05_p001.jpg"), mix_key("A_2.jpg")]}
+            )
+            export_request(base, token, {"backup": with_user_order, "mode": "per-folder"})
+            # 지정 순서에 없는 사진은 화면 규칙대로 뒤에 이름순(A_1, A_3).
+            expect_pages(out / "01_MIX.pdf", ["deck", "A_2", "A_1", "A_3"])
+
+        results.append(report("R4 photoOrder 없을 때 seq·slideOrder 로 화면 순서 재현", r4))
+
+        def r5() -> None:
+            _pkg, base, token = setup_case("bad_photo_order")
+            backup = make_backup([mix_key("A_1.jpg")])
+            for bad in (
+                "text",
+                ["A_1.jpg"],
+                {"01_MIX": "A_1.jpg"},
+                {"01_MIX": [1, 2]},
+                {"01_MIX": ["ok\u0000bad"]},
+                {"": [mix_key("A_1.jpg")]},
+            ):
+                status, _, payload = json_post(
+                    base,
+                    "/api/export-pdf",
+                    token,
+                    {"backup": backup, "mode": "per-folder", "photoOrder": bad},
+                )
+                assert status == 400, (bad, status, payload)
+                assert payload.get("error") == "bad_photo_order", payload
+
+        results.append(report("R5 잘못된 photoOrder 400 거부", r5))
+
+        def r6() -> None:
+            module = load_server_module()
+            sys.path.insert(0, str(SCRIPT_DIR))
+            import export_pdf
+
+            assert module.PDF_SUMMARY_PREFIX == export_pdf.SUMMARY_PREFIX
+            for name in ("DECK05_p001.jpg", "deck1_p12.PNG", "DECK_p3.jpg"):
+                assert export_pdf.is_deck(name), name
+            for name in ("DECK05.jpg", "IMG_DECK1_p1.jpg", "DECK1_p1", "xDECK1_p1.jpg"):
+                assert not export_pdf.is_deck(name), name
+
+        results.append(report("R6 요약 머리말·DECK 판별 규약 동기화", r6))
+    for process in processes:
+        stop_process(process)
+    return results
+
+
 def run_job() -> list[bool]:
     results: list[bool] = []
     processes: list[subprocess.Popen[str]] = []
@@ -1221,18 +1586,15 @@ def run_job() -> list[bool]:
             def j4() -> None:
                 secret = temp / "secret.png"
                 Image.new("RGB", (120, 90), (220, 20, 30)).save(secret)
-                before = {
-                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in out.glob("*.pdf")
-                }
+                # 그룹 폴더의 사진은 모서리 없이도 다시 만들어지므로(내용 해시는 생성 시각에 따라
+                # 달라질 수 있다) 해시 대신 PDF 이름과 쪽 수를 비교한다 — 탈출 키의 비밀 이미지가
+                # 끼면 쪽이 늘어난다.
+                before = {path.name: pdf_page_count(path) for path in out.glob("*.pdf")}
                 before_outside = outside_pdf_snapshot(temp, out)
                 bad_key = "../g/img/../../../secret.png"
                 job = export_job(base, token, make_backup([bad_key]), 60)
-                after = {
-                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in out.glob("*.pdf")
-                }
-                assert before == after
+                after = {path.name: pdf_page_count(path) for path in out.glob("*.pdf")}
+                assert before == after, (before, after)
                 assert outside_pdf_snapshot(temp, out) == before_outside
                 assert "백업 키 거부" in job_log(job)
 
@@ -1646,7 +2008,7 @@ def run_auto_detect() -> list[bool]:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "detect"))
+    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "regress", "detect"))
     return parser.parse_args(argv)
 
 
@@ -1658,9 +2020,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         "rename": run_rename,
         "job": run_job,
         "export": run_export_modes,
+        "regress": run_export_regress,
         "detect": run_auto_detect,
     }
-    selected = [args.only] if args.only else ["auth", "upload", "rename", "job", "export", "detect"]
+    selected = (
+        [args.only]
+        if args.only
+        else ["auth", "upload", "rename", "job", "export", "regress", "detect"]
+    )
     results: list[bool] = []
     try:
         for name in selected:

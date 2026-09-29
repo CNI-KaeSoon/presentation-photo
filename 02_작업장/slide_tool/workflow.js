@@ -804,9 +804,14 @@
       state.uploadLabel = '업로드 ' + (index + 1) + '/' + files.length + ' · ' + file.name;
       renderProgress();
       try {
+        var uploadHeaders = {'X-Filename': encodeURIComponent(file.name)};
+        // EXIF 없는 사진은 수정 시각으로 촬영순을 정한다 — 원래 수정 시각을 서버에 알려 준다.
+        if (Number.isFinite(file.lastModified) && file.lastModified > 0) {
+          uploadHeaders['X-Last-Modified'] = String(Math.floor(file.lastModified));
+        }
         var payload = await api('/api/upload', {
           method: 'POST',
-          headers: {'X-Filename': encodeURIComponent(file.name)},
+          headers: uploadHeaders,
           body: file
         });
         var note = payload.dedup ? '같은 파일이라 건너뜀' :
@@ -848,6 +853,21 @@
     startJob('/api/prepare', {regroup: !!regroup, gapMinutes: gap}, 'prepare');
   }
 
+  // 화면에 보이는 그룹별 최종 사진 순서(촬영순 + 사용자 지정 순서 + 이동 반영, 발표자료 포함).
+  // PDF 쪽 순서를 화면과 똑같이 맞추려고 그대로 서버에 보낸다. 못 읽으면 null(서버가 대체 순서 사용).
+  function currentPhotoOrder() {
+    try {
+      if (typeof DATA === 'undefined' || !DATA || typeof DATA !== 'object') return null;
+      var order = {};
+      Object.keys(DATA).forEach(function (group) {
+        order[group] = (DATA[group] || []).map(function (slide) { return String(slide.file); });
+      });
+      return order;
+    } catch (error) {
+      return null;
+    }
+  }
+
   function runExportPdf() {
     if (state.disabled || isBusy() || state.uploading) return;
     if (typeof collectBackup !== 'function') {
@@ -866,6 +886,7 @@
     var mode = state.exportMode;
     startJob('/api/export-pdf', {
       backup: backup,
+      photoOrder: currentPhotoOrder(),
       onlyDone: !!ui.onlyDone.checked,
       merge: mode === 'merged',
       mode: mode,
@@ -950,7 +971,10 @@
       if (typeof markBackedUp === 'function') markBackedUp();
       refreshStatus().then(function (status) {
         var count = status ? Number(status.resultCount || 0) : 0;
-        showBanner('PDF ' + count + '권이 결과 폴더에 있습니다.', 'ok');
+        var message = 'PDF ' + count + '권이 결과 폴더에 있습니다.';
+        var pages = groupPageSummary(job.result);
+        if (pages) message += '\n' + pages;
+        showBanner(message, job.result && job.result.emptyGroups && job.result.emptyGroups.length ? 'warn' : 'ok');
       });
       return;
     }
@@ -961,6 +985,18 @@
     }
     showBanner('작업이 실패했습니다. 전체 로그에서 마지막 오류를 확인하세요.', 'error');
     refreshStatus();
+  }
+
+  // export 잡 결과(job.result)의 그룹별 쪽 수 한 줄. 한 쪽도 못 만든 그룹은 따로 알린다.
+  function groupPageSummary(result) {
+    if (!result || !Array.isArray(result.groups) || !result.groups.length) return '';
+    var parts = result.groups.map(function (group) {
+      return String(group.name) + ' ' + Number(group.pages || 0) + '쪽';
+    });
+    var line = '그룹별 쪽 수: ' + parts.join(' · ');
+    var empty = Array.isArray(result.emptyGroups) ? result.emptyGroups : [];
+    if (empty.length) line += '\n쪽이 없어 빠진 그룹: ' + empty.map(String).join(', ');
+    return line;
   }
 
   function cancelJob() {

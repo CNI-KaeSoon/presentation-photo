@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -132,7 +133,11 @@ def main() -> int:
             write_backup(backup, key="../g/img/../../../secret.png")
             result = run_export(backup, root, out)
             require_success(result)
-            assert not (out / "g.pdf").exists(), "루트 밖 비밀 이미지가 PDF로 생성됨"
+            # 그룹 폴더의 사진(slide.png)은 모서리 없이도 들어가므로 g.pdf 는 생긴다.
+            # 탈출 키의 비밀 이미지가 끼면 쪽이 2장이 되므로, 1쪽뿐이어야 한다.
+            pdf = out / "g.pdf"
+            pages = len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", pdf.read_bytes())) if pdf.exists() else 0
+            assert pages == 1, f"루트 밖 비밀 이미지가 PDF에 들어감(쪽 수 {pages})"
             assert "백업 키 거부" in result.stderr, "경로 키 거부 경고가 없음"
 
         results.append(report("백업 키 이미지 경로 탈출 차단", traversal_key))
