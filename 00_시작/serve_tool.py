@@ -1576,7 +1576,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             ]
             if regroup:
                 command.append("--force")
-            steps.append(("그룹 나누기", command))
+            steps.append(("발표 나누기", command))
         steps.append(
             (
                 "축소본 만들기",
