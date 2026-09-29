@@ -52,6 +52,25 @@ UPLOAD_EXTS = (
     ".heif",
 )
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+# 발표자료 PDF 업로드 상한. 사진 한 장보다 훨씬 클 수 있어(그림이 든 발표자료) 따로 둔다.
+MAX_DECK_PDF_BYTES = 200 * 1024 * 1024
+DECK_RESULT_PREFIX = "@@DECK_RESULT@@ "     # deck_to_pages.py 가 끝에 찍는 기계용 한 줄(같은 값 — 테스트가 일치를 확인한다)
+DECK_INSPECT_TIMEOUT = 120
+PDFIUM_PROBE_TTL = 30.0
+# deck_to_pages.py 결과 code → (HTTP 상태, 서버 오류 코드)
+DECK_ERROR_STATUS = {
+    "pdfium_missing": (503, "pdfium_missing"),
+    "bad_pdf": (400, "bad_pdf"),
+    "encrypted": (400, "pdf_encrypted"),
+    "no_pages": (400, "pdf_no_pages"),
+    "too_many_pages": (400, "pdf_too_many_pages"),
+    "bad_group": (400, "bad_group_name"),
+    "bad_args": (400, "bad_request"),
+    "group_not_found": (404, "group_not_found"),
+    "no_plan": (409, "no_plan"),
+    "exists": (409, "deck_exists"),
+    "number_in_use": (409, "deck_number_in_use"),
+}
 MAX_EXPORT_BODY_BYTES = 64 * 1024 * 1024
 MAX_RENAME_BODY_BYTES = 64 * 1024
 MAX_AUTO_DETECT_BODY_BYTES = 64 * 1024
@@ -212,8 +231,44 @@ def worker_python(pkg_root: Path) -> Optional[Path]:
     return envcheck.venv_python(pkg_root)
 
 
-def safe_upload_name(raw_quoted: str) -> tuple[Optional[str], str]:
-    """인코딩된 업로드 파일명을 단일 휴대 가능 basename으로 제한한다."""
+_PDFIUM_PROBE: dict[str, tuple[float, bool]] = {}
+_PDFIUM_PROBE_LOCK = threading.Lock()
+
+
+def pdfium_available(pkg_root: Path) -> bool:
+    """작업용 파이썬에서 pypdfium2 를 불러올 수 있는가(발표자료 PDF 넣기의 선택 의존성).
+
+    상태 응답마다 자식 프로세스를 띄우지 않도록 결과를 잠깐 기억한다. 나중에 설치해도 곧 반영된다.
+    """
+    python = worker_python(pkg_root)
+    if python is None:
+        return False
+    key = str(python)
+    now = time.monotonic()
+    with _PDFIUM_PROBE_LOCK:
+        cached = _PDFIUM_PROBE.get(key)
+        if cached is not None and now - cached[0] < PDFIUM_PROBE_TTL:
+            return cached[1]
+    try:
+        proc = subprocess.run(
+            [str(python), "-c", "import pypdfium2"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            check=False,
+        )
+        ok = proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    with _PDFIUM_PROBE_LOCK:
+        _PDFIUM_PROBE[key] = (time.monotonic(), ok)
+    return ok
+
+
+def safe_upload_name(
+    raw_quoted: str, allowed: tuple[str, ...] = UPLOAD_EXTS
+) -> tuple[Optional[str], str]:
+    """인코딩된 업로드 파일명을 단일 휴대 가능 basename으로 제한한다. allowed = 받을 확장자."""
     if not isinstance(raw_quoted, str) or not raw_quoted:
         return None, "파일명이 비어 있습니다."
     try:
@@ -239,8 +294,10 @@ def safe_upload_name(raw_quoted: str) -> tuple[Optional[str], str]:
         return None, "파일명 끝의 공백이나 점은 사용할 수 없습니다."
 
     suffix = Path(value).suffix.lower()
-    if suffix not in UPLOAD_EXTS:
-        return None, "지원하는 사진 확장자가 아닙니다."
+    if suffix not in allowed:
+        if allowed == UPLOAD_EXTS:
+            return None, "지원하는 사진 확장자가 아닙니다."
+        return None, "PDF 파일(.pdf)만 넣을 수 있습니다."
     stem = Path(value).stem.casefold()
     if stem in WINDOWS_RESERVED or stem.split(".", 1)[0] in WINDOWS_RESERVED:
         return None, "운영체제 예약 파일명은 사용할 수 없습니다."
@@ -396,10 +453,12 @@ class Job:
 
     def append_line(self, line: str) -> None:
         clean = str(line).rstrip("\r\n")
-        if clean.startswith(PDF_SUMMARY_PREFIX):
+        for prefix in (PDF_SUMMARY_PREFIX, DECK_RESULT_PREFIX):
+            if not clean.startswith(prefix):
+                continue
             # 화면 로그에는 싣지 않고 잡 결과로만 보관한다. 깨진 줄은 조용히 버린다.
             try:
-                parsed = json.loads(clean[len(PDF_SUMMARY_PREFIX):])
+                parsed = json.loads(clean[len(prefix):])
             except ValueError:
                 parsed = None
             if isinstance(parsed, dict):
@@ -444,21 +503,31 @@ class JobManager:
             return self.current is not None and self.current.state == "running"
 
     def start(
-        self, kind: str, steps: list[tuple[str, list[str]]]
+        self,
+        kind: str,
+        steps: list[tuple[str, list[str]]],
+        cleanup: Optional[list[Path]] = None,
     ) -> Optional[Job]:
+        """cleanup = 잡이 끝나면(성공·실패·취소 모두) 지울 임시 파일들."""
         with self.lock:
             if self.current is not None and self.current.state == "running":
                 return None
             job = Job(kind, len(steps))
             self.current = job
             self._process = None
-        threading.Thread(target=self._run, args=(job, steps), daemon=True).start()
+        threading.Thread(
+            target=self._run, args=(job, steps, list(cleanup or [])), daemon=True
+        ).start()
         return job
 
-    def _run(self, job: Job, steps: list[tuple[str, list[str]]]) -> None:
+    def _run(
+        self, job: Job, steps: list[tuple[str, list[str]]], cleanup: list[Path]
+    ) -> None:
         try:
             self._run_steps(job, steps)
         finally:
+            for temp in cleanup:
+                temp.unlink(missing_ok=True)
             job.finished.set()
 
     def _run_steps(self, job: Job, steps: list[tuple[str, list[str]]]) -> None:
@@ -881,6 +950,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
 
         routes = {
             "/api/upload": self.api_upload,
+            "/api/deck-import": self.api_deck_import,
             "/api/open-folder": self.api_open_folder,
             "/api/rename-group": self.api_rename_group,
             "/api/prepare": self.api_prepare,
@@ -921,6 +991,7 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
         assert self.workflow.work is not None
         assert self.workflow.out is not None
         env = read_env_status(self.workflow.pkg_root)
+        env["pdfium"] = pdfium_available(self.workflow.pkg_root)
         groups: list[dict[str, object]] = []
         try:
             for folder in sorted(self.workflow.work.iterdir(), key=lambda path: path.name):
@@ -1350,6 +1421,211 @@ class ToolHandler(http.server.SimpleHTTPRequestHandler):
             self._error(500, "upload_failed", f"파일을 저장하지 못했습니다: {exc}")
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def _deck_cli(
+        self,
+        python: Path,
+        pdf: Path,
+        group: str,
+        deck_no: Optional[int],
+        replace: bool,
+        info: bool,
+    ) -> list[str]:
+        assert self.workflow.pkg_root is not None
+        assert self.workflow.scripts is not None
+        command = [
+            str(python),
+            str(self.workflow.scripts / "deck_to_pages.py"),
+            "--root",
+            str(self.workflow.pkg_root),
+            "--pdf",
+            str(pdf),
+            "--group",
+            group,
+        ]
+        if deck_no is not None:
+            command += ["--deck-no", str(deck_no)]
+        if replace:
+            command.append("--replace")
+        if info:
+            command.append("--info")
+        return command
+
+    def api_deck_import(self) -> None:
+        """발표자료 PDF 를 받아 쪽 이미지로 바꿔 발표에 넣는다(DECK<번호>_p<쪽>.jpg).
+
+        본문 = PDF 바이트, 머리글 = X-Filename(인코딩된 파일명, .pdf) · X-Group(인코딩된 발표 이름) ·
+        X-Deck-Mode(inspect|import, 기본 import) · X-Replace(1 이면 같은 번호의 기존 쪽을 보관하고 교체) ·
+        X-Deck-No(선택, 0~999).
+        inspect → 200 {"ok","pages","deckNo","existing","group"} (아무것도 바꾸지 않는다).
+        import  → 202 {"ok","job":{id,kind:"deck-import"},"pages","deckNo","existing"}; 끝나면 목록을 다시 만든다.
+        """
+        mode = (self.headers.get("X-Deck-Mode") or "import").strip().lower()
+        if mode not in {"inspect", "import"}:
+            self._error(400, "bad_request", "X-Deck-Mode는 inspect 또는 import여야 합니다.")
+            return
+        name, reason = safe_upload_name(self.headers.get("X-Filename", ""), (".pdf",))
+        if name is None:
+            self._error(400, "bad_filename", reason)
+            return
+        try:
+            raw_group = urllib.parse.unquote(
+                self.headers.get("X-Group", ""), encoding="utf-8", errors="strict"
+            )
+        except (UnicodeDecodeError, ValueError):
+            self._error(400, "bad_group_name", "발표 이름 인코딩이 올바르지 않습니다.")
+            return
+        group, group_reason = safe_group_name(raw_group)
+        if group is not None and not is_group_folder_name(group):
+            group, group_reason = None, "밑줄(_)로 시작하는 이름은 보관용이라 발표로 쓸 수 없습니다."
+        if group is None:
+            self._error(400, "bad_group_name", group_reason)
+            return
+        replace = (self.headers.get("X-Replace") or "").strip() == "1"
+        deck_no: Optional[int] = None
+        raw_no = (self.headers.get("X-Deck-No") or "").strip()
+        if raw_no:
+            if not re.fullmatch(r"[0-9]{1,3}", raw_no):
+                self._error(400, "bad_request", "X-Deck-No는 0~999 정수여야 합니다.")
+                return
+            deck_no = int(raw_no)
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length) if raw_length is not None else -1
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_DECK_PDF_BYTES:
+            self._error(413, "upload_too_large", "Content-Length가 없거나 200MB 상한을 넘었습니다.")
+            return
+        if length == 0:
+            self._error(400, "not_pdf", "빈 파일입니다.")
+            return
+        if mode == "import" and self.workflow.jobs.busy:
+            self._error(409, "busy", "다른 작업이 실행 중입니다.")
+            return
+        python, _env = self._job_prerequisites()
+        if python is None:
+            return
+        assert self.workflow.src is not None
+        assert self.workflow.work is not None
+        try:
+            group_dirs = [
+                child
+                for child in self.workflow.work.iterdir()
+                if nfc(child.name) == group and child.is_dir() and (child / "img").is_dir()
+            ]
+        except OSError as exc:
+            self._error(500, "group_read_failed", f"그룹 목록을 읽지 못했습니다: {exc}")
+            return
+        if len(group_dirs) != 1:
+            self._error(404, "group_not_found", "그 이름의 발표가 작업장에 없습니다.")
+            return
+
+        temp_path = self.workflow.src / f".발표자료-업로드중-{uuid.uuid4().hex}.pdf"
+        received = 0
+        keep_temp = False
+        try:
+            head = b""
+            with temp_path.open("xb") as target:
+                while received < length:
+                    chunk = self.rfile.read(min(STREAM_CHUNK_BYTES, length - received))
+                    if not chunk:
+                        break
+                    if len(head) < 1024:
+                        head += chunk[: 1024 - len(head)]
+                    target.write(chunk)
+                    received += len(chunk)
+            if received != length:
+                self._error(400, "incomplete_upload", "선언한 크기만큼 파일을 받지 못했습니다.")
+                return
+            if b"%PDF-" not in head:
+                self._error(400, "not_pdf", "PDF 파일이 아닙니다.")
+                return
+
+            # 쪽 수·기존 자료·오류를 먼저 동기로 확인한다(빠르다). 실제 변환은 잡이 한다.
+            try:
+                proc = subprocess.run(
+                    self._deck_cli(python, temp_path, group, deck_no, replace, True),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=DECK_INSPECT_TIMEOUT,
+                    check=False,
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8:replace", "PYTHONUTF8": "1"},
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                self._error(500, "deck_inspect_failed", f"PDF를 확인하지 못했습니다: {exc}")
+                return
+            result: Optional[dict[str, object]] = None
+            for line in proc.stdout.splitlines():
+                if line.startswith(DECK_RESULT_PREFIX):
+                    try:
+                        parsed = json.loads(line[len(DECK_RESULT_PREFIX):])
+                    except ValueError:
+                        continue
+                    if isinstance(parsed, dict):
+                        result = parsed
+            if result is None:
+                self._error(500, "deck_inspect_failed", "PDF 확인 결과를 읽지 못했습니다.")
+                return
+            if not result.get("ok"):
+                status, code = DECK_ERROR_STATUS.get(
+                    str(result.get("code")), (500, "deck_inspect_failed")
+                )
+                detail = str(result.get("detail") or "PDF를 확인하지 못했습니다.")
+                if code == "pdfium_missing":
+                    detail = (
+                        "발표자료 PDF를 그림으로 바꾸는 pypdfium2가 설치되어 있지 않습니다. "
+                        "시작 파일을 다시 실행해 설치하거나, 터미널에서 pip install pypdfium2 를 실행하세요."
+                    )
+                self._error(status, code, detail)
+                return
+            summary: dict[str, object] = {
+                "ok": True,
+                "group": group,
+                "pages": result.get("pages"),
+                "deckNo": result.get("deckNo"),
+                "existing": result.get("existing"),
+            }
+            if mode == "inspect":
+                self._send_json(summary)
+                return
+            existing = result.get("existing")
+            if isinstance(existing, int) and existing > 0 and not replace:
+                self._error(
+                    409,
+                    "deck_exists",
+                    f"이 발표에는 같은 번호의 발표자료가 이미 {existing}쪽 있습니다. 교체하려면 replace를 켜세요.",
+                )
+                return
+
+            steps = [
+                (
+                    "발표자료 쪽 만들기",
+                    self._deck_cli(python, temp_path, group, deck_no, replace, False),
+                ),
+                (
+                    "목록 만들기",
+                    [
+                        str(python),
+                        str(self.workflow.work / "slide_tool" / "gen_manifest.py"),
+                    ],
+                ),
+            ]
+            job = self.workflow.jobs.start("deck-import", steps, cleanup=[temp_path])
+            if job is None:
+                self._error(409, "busy", "다른 작업이 실행 중입니다.")
+                return
+            keep_temp = True      # 이제 잡이 끝날 때 지운다
+            summary["job"] = {"id": job.id, "kind": job.kind}
+            self._send_json(summary, 202)
+        except OSError as exc:
+            self._error(500, "upload_failed", f"파일을 저장하지 못했습니다: {exc}")
+        finally:
+            if not keep_temp:
+                temp_path.unlink(missing_ok=True)
 
     def api_rename_group(self) -> None:
         payload = self._read_json_body(MAX_RENAME_BODY_BYTES)

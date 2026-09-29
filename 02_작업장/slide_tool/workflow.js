@@ -27,11 +27,15 @@
     disabled: false,
     offline: false,
     newEventRunning: false,
+    deckBusy: false,      // 발표자료 PDF 를 확인·올리는 중(서버 잡이 시작되기 전)
+    deckGroup: null,
     localBandChecked: false,
     dndBound: false
   };
   var ui = {};
   var STEP_TITLES = {0: '① 사진 넣기', 1: '② 준비', 3: '④ PDF'};
+  var DECK_PDF_MAX_BYTES = 200 * 1024 * 1024;   // 서버 상한(MAX_DECK_PDF_BYTES)과 같다
+  var DECK_DROP_GUIDE = '발표자료는 발표 ⋯ 메뉴의 [발표자료 PDF 넣기]로 넣으세요. (PDF는 사진으로 올리지 않았습니다.)';
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -293,6 +297,16 @@
       ui.fileInput.value = '';
     });
     document.body.appendChild(ui.fileInput);
+
+    // 발표자료 PDF 고르기(발표 ⋯ 메뉴에서 연다) — 사진 입력과 따로 둔다: PDF 한 개, 확장자 .pdf.
+    ui.deckInput = el('input', {type: 'file', accept: '.pdf,application/pdf'});
+    ui.deckInput.hidden = true;
+    ui.deckInput.addEventListener('change', function () {
+      var file = ui.deckInput.files && ui.deckInput.files[0];
+      ui.deckInput.value = '';
+      if (file) inspectDeck(state.deckGroup, file);
+    });
+    document.body.appendChild(ui.deckInput);
 
     // ---- 단계 패널(오른쪽 서랍) ----
     ui.drawer = el('aside', {id: 'wfDrawer', 'aria-label': '작업 단계 패널'});
@@ -680,14 +694,14 @@
       var total = Number(job.phaseTotal || 0);
       result.busy = true;
       result.busyStep = job.kind === 'export' ? 3 : 1;
-      result.busyText = (job.kind === 'export' ? 'PDF 만드는 중' : '사진 준비 중') +
+      result.busyText = (job.kind === 'export' ? 'PDF 만드는 중' : job.kind === 'deck-import' ? '발표자료 넣는 중' : '사진 준비 중') +
         (total ? ' · 단계 ' + Number(job.phase || 0) + '/' + total : '');
     }
     return result;
   }
 
   function renderPanel(status) {
-    var running = isBusy() || state.uploading || !!(status.job && status.job.state === 'running');
+    var running = isBusy() || state.uploading || state.deckBusy || !!(status.job && status.job.state === 'running');
     setText(ui.summary,
       '원본 ' + Number(status.srcCount || 0) + '장 · 발표 ' +
       (Array.isArray(status.groups) ? status.groups.length : 0) + '개 · PDF ' +
@@ -944,7 +958,18 @@
         showBanner('폴더는 “사진 폴더 열기”로 넣어주세요. 이 화면에서는 파일만 끌어놓을 수 있습니다.', 'warn');
         return;
       }
-      uploadFiles(event.dataTransfer.files);
+      var dropped = Array.from(event.dataTransfer.files || []);
+      var pdfs = dropped.filter(isPdfFile);
+      if (pdfs.length) {
+        // 발표자료 PDF 는 사진 원본 폴더로 받지 않는다 — 넣는 방법만 알려 준다(다른 사진은 그대로 올린다).
+        notify(DECK_DROP_GUIDE, 8000);
+        dropped = dropped.filter(function (file) { return !isPdfFile(file); });
+        if (!dropped.length) {
+          showBanner(DECK_DROP_GUIDE, 'info');
+          return;
+        }
+      }
+      uploadFiles(dropped);
     }, true);
   }
 
@@ -1128,6 +1153,24 @@
     if (state.pollTimer) clearTimeout(state.pollTimer);
     state.pollTimer = null;
     setControlsDisabled(false);
+    if (job.kind === 'deck-import' && job.state !== 'cancelled') {
+      var deckResult = job.result || {};
+      if (job.state === 'done') {
+        var deckMessage = '발표자료 ' + Number(deckResult.pages || 0) + '쪽을 넣었습니다';
+        try { sessionStorage.setItem(NEW_EVENT_TOAST_KEY, deckMessage); } catch (_error) { /* 알림만 못 띄울 뿐 */ }
+        showBanner(deckMessage + '. 새 목록을 불러옵니다.', 'ok');
+        setTimeout(function () { location.reload(); }, 250);
+        return;
+      }
+      (ui.progresses || []).forEach(function (box) { box.details.open = true; });
+      showBanner((deckResult.detail || '발표자료를 넣지 못했습니다.') + '\n“자세한 기록”에서 마지막 오류를 확인하세요.', 'error', [
+        {label: '자세한 기록 보기', onClick: function () {
+          if (!document.body.classList.contains('nodata')) openStep(1);
+        }}
+      ]);
+      refreshStatus();
+      return;
+    }
     if (job.state === 'done' && job.kind === 'prepare') {
       markOriginSeen();
       showBanner('사진 준비가 끝났습니다. 새 목록을 불러옵니다.', 'ok');
@@ -1221,17 +1264,38 @@
     var phase = Number(job && job.phase || 0);
     var total = Number(job && job.phaseTotal || 0);
     var percent = total > 0 ? Math.round((phase / total) * 100) : 4;
+    var pageNote = '';
+    if (job && job.kind === 'deck-import') {
+      // 쪽 그림을 만드는 동안에는 "쪽 3/12" 기록으로 진행률을 낸다(쪽이 많을 수 있다).
+      var pages = deckPageProgress();
+      if (phase === 1 && pages) {
+        percent = Math.round((pages.done / pages.total) * 90);
+        pageNote = ' · ' + pages.done + '/' + pages.total + '쪽';
+      } else if (phase >= 2) {
+        percent = 95;
+      }
+      if (job.state === 'running') showBanner('발표자료를 넣는 중입니다' + pageNote + ' — 끝날 때까지 창을 닫지 마세요.', 'info');
+    }
     if (job && job.state === 'done') percent = 100;
     boxes.forEach(function (box) {
       box.root.classList.add('show');
       setText(box.label,
-        job ? ((job.phaseName || '작업 중') + (total ? ' · 단계 ' + phase + '/' + total : '')) : '작업 로그');
+        job ? ((job.phaseName || '작업 중') + pageNote + (total ? ' · 단계 ' + phase + '/' + total : '')) : '작업 로그');
       box.fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
       box.cancel.hidden = !(job && job.state === 'running');
       box.cancel.disabled = state.cancelling;
       setText(box.note, '');
       setText(box.log, state.logs.join('\n'));
     });
+  }
+
+  // deck_to_pages.py 가 쪽마다 찍는 "쪽 3/12" 중 마지막 것.
+  function deckPageProgress() {
+    for (var i = state.logs.length - 1; i >= 0; i -= 1) {
+      var m = /^쪽 (\d+)\/(\d+)$/.exec(state.logs[i]);
+      if (m) return {done: Number(m[1]), total: Number(m[2])};
+    }
+    return null;
   }
 
   function showBanner(message, level, actions) {
@@ -1301,6 +1365,134 @@
         'error',
         [{label: '다시 연결', onClick: reconnect}]
       );
+    });
+  }
+
+  // ===================== 발표자료 PDF 넣기 =====================
+  // 발표 ⋯ 메뉴 → PDF 고르기 → 서버가 쪽 수를 알려 줌(inspect) → 확인 대화 → 잡(쪽마다 그림 만들기 → 목록 만들기).
+  function deckAvailability() {
+    if (state.offline) return {enabled: false, reason: '서버에 연결되지 않았습니다 — [다시 연결]을 누르세요.'};
+    if (state.disabled) return {enabled: false, reason: '시작 파일로 연 도구 서버에서만 쓸 수 있습니다.'};
+    if (!TOKEN || !state.status) return {enabled: false, reason: '도구 서버 연결을 확인하는 중입니다.'};
+    if (isBusy() || state.uploading || state.deckBusy) return {enabled: false, reason: '실행 중인 작업이 끝난 뒤 쓰세요.'};
+    if (state.status.env && state.status.env.pdfium === false) {
+      return {
+        enabled: false,
+        reason: '발표자료 PDF 기능(pypdfium2)이 설치되어 있지 않습니다. 시작 파일을 다시 실행하거나 터미널에서 pip install pypdfium2 를 실행하세요.'
+      };
+    }
+    return {enabled: true, reason: ''};
+  }
+
+  function isPdfFile(file) {
+    return !!file && (/\.pdf$/i.test(String(file.name || '')) || file.type === 'application/pdf');
+  }
+
+  function deckHeaders(group, file, mode, replace) {
+    // 서버는 파일명을 검사만 한다(#·?·% 등은 거부) — PDF 이름은 쓰이지 않으므로 안전한 글자로 바꿔 보낸다.
+    var name = String(file.name || 'deck.pdf').replace(/[#?%<>:"|*\\\/\u0000-\u001f]/g, '_').replace(/^\.+/, '_').replace(/[ .]+$/, '');
+    if (!/\.pdf$/i.test(name)) name = 'deck.pdf';
+    return {
+      'X-Filename': encodeURIComponent(name),
+      'X-Group': encodeURIComponent(group),
+      'X-Deck-Mode': mode,
+      'X-Replace': replace ? '1' : '0'
+    };
+  }
+
+  function pickDeckPdf(group) {
+    var availability = deckAvailability();
+    if (!availability.enabled) {
+      notify(availability.reason, 6000);
+      return;
+    }
+    state.deckGroup = group;
+    ui.deckInput.value = '';
+    ui.deckInput.click();
+  }
+
+  function inspectDeck(group, file) {
+    if (!group) return;
+    if (!isPdfFile(file)) {
+      notify('PDF 파일만 넣을 수 있습니다.', 5000);
+      return;
+    }
+    if (file.size > DECK_PDF_MAX_BYTES) {
+      notify('PDF가 너무 큽니다(200MB까지 넣을 수 있습니다).', 6000);
+      return;
+    }
+    clearBanner();
+    state.deckBusy = true;
+    setControlsDisabled(true);
+    showBanner('PDF를 읽는 중입니다… ' + file.name, 'info');
+    api('/api/deck-import', {method: 'POST', headers: deckHeaders(group, file, 'inspect', false), body: file}).then(function (info) {
+      state.deckBusy = false;
+      clearBanner();
+      setControlsDisabled(false);
+      confirmDeck(group, file, info);
+    }).catch(function (error) {
+      state.deckBusy = false;
+      setControlsDisabled(false);
+      showApiError(error);
+    });
+  }
+
+  function confirmDeck(group, file, info) {
+    if (typeof openModal !== 'function') return;
+    var pages = Number(info.pages || 0);
+    var existing = Number(info.existing || 0);
+    var deckNo = Number(info.deckNo);
+    var label = 'DECK' + (deckNo < 10 ? '0' : '') + deckNo;
+    var body = el('div', {}, [
+      el('p', {}, [
+        el('strong', {text: pages + '쪽'}),
+        document.createTextNode('을 «' + group + '» 발표에 자료로 넣습니다.')
+      ]),
+      el('p', {
+        className: 'wfRowInfo',
+        text: '«' + file.name + '» 를 쪽마다 그림으로 바꿔 넣습니다(' + label + '_p001 …). ' +
+          '자료 쪽은 경계·색보정 없이 원본 그대로 PDF에 들어가고, 위치는 고정됩니다.'
+      })
+    ]);
+    if (existing > 0) {
+      body.appendChild(el('p', {}, [
+        el('strong', {text: '이 발표에는 같은 번호(' + label + ')의 발표자료가 이미 ' + existing + '쪽 있습니다.'}),
+        document.createTextNode(' 교체하면 기존 쪽은 삭제하지 않고 이 발표 폴더 안의 보관 폴더로 옮깁니다.')
+      ]));
+    }
+    openModal({
+      title: existing > 0 ? '발표자료 교체' : '발표자료 PDF 넣기',
+      node: body,
+      ok: existing > 0 ? '교체해서 넣기' : '넣기',
+      okKind: existing > 0 ? 'danger' : 'primary',
+      onOk: function () { startDeckImport(group, file, existing > 0); }
+    });
+  }
+
+  function startDeckImport(group, file, replace) {
+    if (state.disabled || isBusy() || state.uploading || state.deckBusy) return;
+    clearBanner();
+    state.uploadPercent = 0;
+    state.uploadLabel = '';
+    state.deckBusy = true;
+    if (!document.body.classList.contains('nodata')) openStep(1);
+    setControlsDisabled(true);
+    showBanner('발표자료 PDF를 서버로 보내는 중입니다… ' + file.name, 'info');
+    api('/api/deck-import', {method: 'POST', headers: deckHeaders(group, file, 'import', replace), body: file}).then(function (response) {
+      state.deckBusy = false;
+      state.job = response.job || {kind: 'deck-import', state: 'running'};
+      state.job.state = state.job.state || 'running';
+      state.activeKind = 'deck-import';
+      state.logs = [];
+      state.after = 0;
+      renderProgress();
+      watchJob('deck-import');
+    }).catch(function (error) {
+      state.deckBusy = false;
+      state.job = null;
+      setControlsDisabled(false);
+      showApiError(error);
+      renderProgress();
     });
   }
 
@@ -1543,7 +1735,10 @@
     openFolder: openFolder,
     reconnect: reconnect,
     confirmNewEvent: confirmNewEvent,
-    newEventAvailability: newEventAvailability
+    newEventAvailability: newEventAvailability,
+    // 발표 ⋯ 메뉴의 [발표자료 PDF 넣기…]
+    deckAvailability: deckAvailability,
+    pickDeckPdf: pickDeckPdf
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

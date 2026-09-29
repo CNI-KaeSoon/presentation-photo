@@ -60,7 +60,8 @@ def empty_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def make_fake_venv(pkg: Path) -> None:
+def make_fake_venv(pkg: Path, block_dir: Optional[Path] = None) -> None:
+    """block_dir 가 있으면 그 폴더를 PYTHONPATH 맨 앞에 둔 래퍼를 만든다(모듈 가리기 시뮬레이션용)."""
     bindir = pkg / ".venv" / ("Scripts" if sys.platform == "win32" else "bin")
     bindir.mkdir(parents=True, exist_ok=True)
     name = "python.exe" if sys.platform == "win32" else "python3"
@@ -71,8 +72,13 @@ def make_fake_venv(pkg: Path) -> None:
     else:
         # resolve() 하면 시스템 파이썬을 가리켜 venv site-packages(cv2 등)를 잃는다.
         # 테스트를 실행한 venv 인터프리터를 그대로 exec 하는 셸 래퍼를 쓴다.
+        prefix = (
+            f'PYTHONPATH="{block_dir}${{PYTHONPATH:+:$PYTHONPATH}}"; export PYTHONPATH\n'
+            if block_dir is not None
+            else ""
+        )
         target.write_text(
-            f'#!/bin/sh\nexec "{os.path.abspath(sys.executable)}" "$@"\n',
+            f'#!/bin/sh\n{prefix}exec "{os.path.abspath(sys.executable)}" "$@"\n',
             encoding="utf-8",
         )
         target.chmod(0o755)
@@ -87,7 +93,7 @@ def make_fake_venv(pkg: Path) -> None:
     )
 
 
-def make_pkg(temp: Path) -> Path:
+def make_pkg(temp: Path, block_dir: Optional[Path] = None) -> Path:
     pkg = temp / "package"
     for relative in (
         "00_시작",
@@ -114,7 +120,7 @@ def make_pkg(temp: Path) -> Path:
     Image.new("RGB", (120, 90), (210, 90, 30)).save(
         pkg / "01_원본사진" / "IMG_2.jpg"
     )
-    make_fake_venv(pkg)
+    make_fake_venv(pkg, block_dir)
     return pkg
 
 
@@ -2397,9 +2403,706 @@ def run_new_event() -> list[bool]:
     return results
 
 
+# ---------------------------------------------------------------------------
+# 발표자료 PDF → DECK 쪽 (deck_to_pages.py · POST /api/deck-import)
+# ---------------------------------------------------------------------------
+DECK_PAGE_COLORS = [(220, 30, 30), (30, 200, 30), (30, 30, 220)]   # 빨강·초록·파랑 = 1·2·3쪽
+DECK_SCRIPT = SCRIPT_DIR / "deck_to_pages.py"
+DECK_RESULT_PREFIX = "@@DECK_RESULT@@ "
+
+
+def deck_color_name(rgb: tuple[int, int, int]) -> str:
+    """PDF 쪽 중앙 색 → 이름. 발표자료 1·2·3쪽(d1·d2·d3), 사진 P(청록)·Q(노랑)."""
+    red, green, blue = rgb
+    if red > 150 and green < 100 and blue < 100:
+        return "d1"
+    if green > 150 and red < 100 and blue < 100:
+        return "d2"
+    if blue > 150 and red < 100 and green < 100:
+        return "d3"
+    if green > 150 and blue > 150 and red < 100:
+        return "P"
+    if red > 150 and green > 150 and blue < 120:
+        return "Q"
+    if all(100 < channel < 160 for channel in rgb):
+        return "R"
+    return f"?{rgb}"
+
+
+def deck_pdf_pages(path: Path) -> list[str]:
+    return [deck_color_name(c) for c in pdf_page_colors(path, pdf_page_count(path))]
+
+
+def make_deck_pdf(path: Path, colors: Optional[list[tuple[int, int, int]]] = None) -> Path:
+    """쪽마다 색이 다른 PDF 를 Pillow 로 만든다(1600x900 화소를 100dpi 로 = 1152x648pt)."""
+    pages = [Image.new("RGB", (1600, 900), color) for color in (colors or DECK_PAGE_COLORS)]
+    pages[0].save(
+        str(path), "PDF", resolution=100.0, save_all=True, append_images=pages[1:]
+    )
+    return path
+
+
+def make_deck_groups(pkg: Path) -> None:
+    """01_G1(사진 P_1) · 02_G2(사진 Q_1) · 기타발표(번호 없는 이름, 사진 R_1). 사진은 원본·작업 img 양쪽에 둔다.
+
+    make_pkg 가 넣어 둔 IMG_1·IMG_2 는 계획에 없으므로 치운다(계획 불일치 0 에서 시작하려고).
+    """
+    for leftover in ("IMG_1.jpg", "IMG_2.jpg"):
+        (pkg / "01_원본사진" / leftover).unlink()
+    layout = {
+        "01_G1": ("P_1.jpg", (30, 200, 220)),
+        "02_G2": ("Q_1.jpg", (220, 220, 30)),
+        "기타발표": ("R_1.jpg", (128, 128, 128)),
+    }
+    plan_groups: dict[str, list[str]] = {}
+    for group, (name, color) in layout.items():
+        (pkg / "02_작업장" / group / "img").mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (160, 120), color).save(pkg / "01_원본사진" / name)
+        Image.new("RGB", (160, 120), color).save(pkg / "02_작업장" / group / "img" / name)
+        plan_groups[group] = [name]
+    plan = {
+        "_type": "slide_tool_worktree",
+        "_version": 2,
+        "root": ".",
+        "source": "../01_원본사진",
+        "groups": plan_groups,
+    }
+    (pkg / "02_작업장" / "worktree.json").write_text(
+        json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    run_gen_manifest(pkg)
+
+
+def run_gen_manifest(pkg: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(pkg / "02_작업장" / "slide_tool" / "gen_manifest.py")],
+        cwd=pkg,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout + result.stderr).strip()
+
+
+def plan_groups(pkg: Path) -> dict[str, list[str]]:
+    doc = json.loads((pkg / "02_작업장" / "worktree.json").read_text(encoding="utf-8"))
+    return doc["groups"]
+
+
+def manifest_names(pkg: Path, group: str) -> list[str]:
+    text = (pkg / "02_작업장" / "slide_tool" / "data.js").read_text(encoding="utf-8")
+    body = text.split("=", 1)[1].strip().rstrip(";")
+    return [row["name"] for row in json.loads(body)[group]]
+
+
+def deck_cli(
+    pkg: Path,
+    *args: str,
+    env: Optional[dict[str, str]] = None,
+    script: Optional[Path] = None,
+) -> tuple[int, str, dict[str, object]]:
+    """deck_to_pages.py 를 실행한다. (종료 코드, 출력, 기계용 결과 줄)."""
+    environment = os.environ.copy()
+    environment.update(env or {})
+    result = subprocess.run(
+        [sys.executable, str(script or DECK_SCRIPT), "--root", str(pkg), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+        timeout=120,
+        check=False,
+    )
+    machine: dict[str, object] = {}
+    for line in result.stdout.splitlines():
+        if line.startswith(DECK_RESULT_PREFIX):
+            machine = json.loads(line[len(DECK_RESULT_PREFIX):])
+    return result.returncode, result.stdout + result.stderr, machine
+
+
+def deck_names(deck_no: int, count: int) -> list[str]:
+    return [f"DECK{deck_no:02d}_p{index:03d}.jpg" for index in range(1, count + 1)]
+
+
+def deck_tree_bytes(pkg: Path) -> dict[str, str]:
+    """01_원본사진·02_작업장 전체의 파일 해시 — '아무것도 바뀌지 않았다' 확인용."""
+    snapshot: dict[str, str] = {}
+    for top in ("01_원본사진", "02_작업장"):
+        for path in sorted((pkg / top).rglob("*")):
+            if path.is_file() and path.name != "data.js":
+                snapshot[path.relative_to(pkg).as_posix()] = hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+    return snapshot
+
+
+def pdf_first_page_width_pt(path: Path) -> float:
+    pdfinfo = shutil.which("pdfinfo")
+    assert pdfinfo is not None, "pdfinfo(poppler)가 필요합니다."
+    result = subprocess.run(
+        [pdfinfo, "-f", "1", "-l", "1", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    match = re.search(r"Page\s+1 size:\s+([0-9.]+) x", result.stdout)
+    assert match, result.stdout
+    return float(match.group(1))
+
+
+def deck_request(
+    base: str,
+    token: str,
+    pdf: bytes,
+    group: str,
+    *,
+    mode: str = "import",
+    replace: bool = False,
+    name: str = "deck.pdf",
+    deck_no: Optional[str] = None,
+    origin: Optional[str] = None,
+    with_token: bool = True,
+    raw_group: Optional[str] = None,
+) -> tuple[int, dict[str, object]]:
+    headers = {
+        "Origin": origin or base,
+        "Content-Type": "application/pdf",
+        "X-Filename": urllib.parse.quote(name, safe=""),
+        "X-Group": raw_group if raw_group is not None else urllib.parse.quote(group, safe=""),
+        "X-Deck-Mode": mode,
+        "X-Replace": "1" if replace else "0",
+    }
+    if with_token:
+        headers["X-Workflow-Token"] = token
+    if deck_no is not None:
+        headers["X-Deck-No"] = deck_no
+    status, _, raw = http_request("POST", base + "/api/deck-import", headers=headers, body=pdf)
+    return status, decode_json(raw)
+
+
+def run_deck() -> list[bool]:
+    """발표자료 PDF 를 DECK 쪽으로: CLI 변환·교체·오류, 서버 API, 내보내기 반영, 준비·나누기와의 공존."""
+    results: list[bool] = []
+
+    def k0() -> None:
+        # 규약 동기화: 서버·CLI·내보내기·화면이 같은 이름 규칙과 기계용 머리말을 쓴다.
+        sys.path.insert(0, str(SCRIPT_DIR))
+        import deck_to_pages
+        import export_pdf
+
+        assert load_server_module().DECK_RESULT_PREFIX == deck_to_pages.RESULT_PREFIX
+        for name in (
+            "DECK05_p001.jpg", "deck1_p12.PNG", "DECK_p3.jpg", "DECK05.jpg",
+            "IMG_DECK1_p1.jpg", "DECK1_p1", "xDECK1_p1.jpg", "DECK01_p001.jp2",
+        ):
+            assert (deck_to_pages.deck_no_of(name) is not None) == export_pdf.is_deck(name), name
+        assert deck_to_pages.deck_no_of("DECK03_p001.jpg") == deck_to_pages.deck_no_of("DECK3_p2.jpg") == 3
+
+    results.append(report("DK0 DECK 이름 규약·기계용 머리말이 서버·CLI·내보내기에서 같다", k0))
+    if importlib.util.find_spec("pypdfium2") is None:
+        print("[SKIP] 발표자료 PDF 테스트 — pypdfium2 가 설치되어 있지 않다(pip install pypdfium2).")
+        return results
+    processes: list[subprocess.Popen[str]] = []
+    with tempfile.TemporaryDirectory(prefix="workflow_deck_") as temp_dir:
+        temp = Path(temp_dir)
+        pdf3 = make_deck_pdf(temp / "deck3.pdf")
+        pdf2 = make_deck_pdf(temp / "deck2.pdf", [DECK_PAGE_COLORS[2], DECK_PAGE_COLORS[0]])
+
+        def setup(name: str, block_dir: Optional[Path] = None) -> Path:
+            pkg = make_pkg(temp / name, block_dir)
+            make_deck_groups(pkg)
+            return pkg
+
+        try:
+            def k1() -> None:
+                # 변환: 파일명·쪽 수·해상도·저장 위치·계획 반영·화면 목록·계획 불일치 0.
+                pkg = setup("cli")
+                _, base, token = start_server(pkg, processes)
+                status, _, raw = http_request(
+                    "GET", base + "/api/status", headers={"X-Workflow-Token": token}
+                )
+                before = decode_json(raw)
+                assert before["planMismatch"] == {"missing": 0, "added": 0}, before
+
+                code, output, machine = deck_cli(pkg, "--pdf", str(pdf3), "--group", "01_G1")
+                assert code == 0 and machine.get("ok") is True, output
+                assert machine["pages"] == 3 and machine["deckNo"] == 1, machine
+                names = deck_names(1, 3)
+                src_dir = pkg / "01_원본사진" / "발표자료" / "01_G1"
+                img_dir = pkg / "02_작업장" / "01_G1" / "img"
+                for name in names:
+                    assert (src_dir / name).is_file(), name
+                    assert (img_dir / name).is_file(), name
+                    assert (src_dir / name).read_bytes() == (img_dir / name).read_bytes()
+                    with Image.open(src_dir / name) as image:
+                        assert image.format == "JPEG", image.format
+                        assert image.size == (2400, 1350), image.size
+                assert (src_dir / "DECK01_원본.pdf").read_bytes() == pdf3.read_bytes()
+                assert not list(src_dir.glob(".render-*")), "임시 폴더가 남았다"
+                groups = plan_groups(pkg)
+                assert groups["01_G1"] == names + ["P_1.jpg"], groups
+                assert groups["02_G2"] == ["Q_1.jpg"], groups
+                run_gen_manifest(pkg)
+                assert manifest_names(pkg, "01_G1") == names + ["P_1.jpg"]
+                status, _, raw = http_request(
+                    "GET", base + "/api/status", headers={"X-Workflow-Token": token}
+                )
+                after = decode_json(raw)
+                assert after["planMismatch"] == {"missing": 0, "added": 0}, after["planMismatch"]
+
+            results.append(report("DK1 CLI 변환: 이름·2400px·저장 위치·계획·목록·불일치 0", k1))
+
+            def k2() -> None:
+                # 해상도 옵션과 번호 규칙.
+                pkg = setup("opts")
+                code, output, machine = deck_cli(
+                    pkg, "--pdf", str(pdf3), "--group", "02_G2", "--width", "1000"
+                )
+                assert code == 0, output
+                with Image.open(pkg / "02_작업장" / "02_G2" / "img" / "DECK02_p001.jpg") as image:
+                    assert image.size == (1000, 563), image.size
+                code, output, machine = deck_cli(
+                    pkg, "--pdf", str(pdf3), "--group", "기타발표", "--dpi", "72"
+                )
+                assert code == 0 and machine["deckNo"] == 1, (output, machine)   # 2 는 쓰는 중 → 가장 작은 빈 번호
+                with Image.open(pkg / "02_작업장" / "기타발표" / "img" / "DECK01_p001.jpg") as image:
+                    assert image.size == (1152, 648), image.size
+                code, output, machine = deck_cli(
+                    pkg, "--pdf", str(pdf3), "--group", "01_G1", "--deck-no", "7"
+                )
+                assert code == 0 and machine["deckNo"] == 7, output
+                assert (pkg / "02_작업장" / "01_G1" / "img" / "DECK07_p003.jpg").is_file()
+                # 이미 다른 발표가 쓰는 번호는 거부
+                code, output, machine = deck_cli(
+                    pkg, "--pdf", str(pdf3), "--group", "01_G1", "--deck-no", "2"
+                )
+                assert code == 1 and machine.get("code") == "number_in_use", (output, machine)
+                for bad in (("--width", "5"), ("--dpi", "5"), ("--deck-no", "1000")):
+                    code, output, machine = deck_cli(
+                        pkg, "--pdf", str(pdf3), "--group", "01_G1", *bad
+                    )
+                    assert code == 1 and machine.get("code") == "bad_args", (bad, output)
+
+            results.append(report("DK2 --width/--dpi·번호 기본값·다른 발표 번호 거부", k2))
+
+            def k3() -> None:
+                # 이미 있으면 거부(무변경) → --replace 는 기존 쪽을 보관 폴더로 옮기고 교체.
+                pkg = setup("replace")
+                code, output, _ = deck_cli(pkg, "--pdf", str(pdf3), "--group", "01_G1")
+                assert code == 0, output
+                snapshot = deck_tree_bytes(pkg)
+                plan_before = (pkg / "02_작업장" / "worktree.json").read_bytes()
+                code, output, machine = deck_cli(pkg, "--pdf", str(pdf2), "--group", "01_G1")
+                assert code == 1 and machine.get("code") == "exists", (output, machine)
+                assert deck_tree_bytes(pkg) == snapshot, "거부했는데 파일이 바뀌었다"
+                assert (pkg / "02_작업장" / "worktree.json").read_bytes() == plan_before
+
+                old_first = (pkg / "02_작업장" / "01_G1" / "img" / "DECK01_p001.jpg").read_bytes()
+                code, output, machine = deck_cli(
+                    pkg, "--pdf", str(pdf2), "--group", "01_G1", "--replace"
+                )
+                assert code == 0 and machine["pages"] == 2 and machine["replaced"] == 3, (output, machine)
+                names = deck_names(1, 2)
+                assert plan_groups(pkg)["01_G1"] == names + ["P_1.jpg"], plan_groups(pkg)
+                img_dir = pkg / "02_작업장" / "01_G1" / "img"
+                src_dir = pkg / "01_원본사진" / "발표자료" / "01_G1"
+                assert sorted(p.name for p in img_dir.glob("DECK*")) == names
+                assert sorted(p.name for p in src_dir.glob("DECK*.jpg")) == names
+                assert (src_dir / "DECK01_원본.pdf").read_bytes() == pdf2.read_bytes()
+                archives = sorted((pkg / "02_작업장" / "01_G1").glob("_이전발표자료_*"))
+                assert len(archives) == 1, archives
+                assert machine["archive"] == archives[0].name
+                assert sorted(p.name for p in (archives[0] / "원본").iterdir()) == sorted(
+                    deck_names(1, 3) + ["DECK01_원본.pdf"]
+                )
+                assert sorted(p.name for p in (archives[0] / "작업본").iterdir()) == deck_names(1, 3)
+                assert (archives[0] / "작업본" / "DECK01_p001.jpg").read_bytes() == old_first
+                assert (img_dir / "DECK01_p001.jpg").read_bytes() != old_first
+                # 한 번 더 교체해도 보관 폴더는 덮어쓰지 않고 새로 만든다.
+                code, output, _ = deck_cli(pkg, "--pdf", str(pdf3), "--group", "01_G1", "--replace")
+                assert code == 0, output
+                assert len(list((pkg / "02_작업장" / "01_G1").glob("_이전발표자료_*"))) == 2
+                assert plan_groups(pkg)["01_G1"] == deck_names(1, 3) + ["P_1.jpg"]
+                # 보관 폴더는 화면 목록·계획 불일치에 들어오지 않는다.
+                run_gen_manifest(pkg)
+                assert manifest_names(pkg, "01_G1") == deck_names(1, 3) + ["P_1.jpg"]
+
+            results.append(report("DK3 이미 있으면 거부(무변경)·--replace 보관 이동·반복 교체", k3))
+
+            def k4() -> None:
+                # 오류: 손상 PDF·없는 파일·경로 탈출·`_` 발표·없는 발표·암호 PDF·계획 없음. 흔적이 남지 않는다.
+                pkg = setup("errors")
+                snapshot = deck_tree_bytes(pkg)
+                junk = temp / "junk.pdf"
+                junk.write_bytes(b"this is not a pdf at all")
+                cases = [
+                    (("--pdf", str(junk), "--group", "01_G1"), "bad_pdf"),
+                    (("--pdf", str(temp / "none.pdf"), "--group", "01_G1"), "bad_pdf"),
+                    (("--pdf", str(pdf3), "--group", "../evil"), "bad_group"),
+                    (("--pdf", str(pdf3), "--group", "a/b"), "bad_group"),
+                    (("--pdf", str(pdf3), "--group", "_이전작업_260929"), "bad_group"),
+                    (("--pdf", str(pdf3), "--group", "없는발표"), "group_not_found"),
+                ]
+                qpdf = shutil.which("qpdf")
+                if qpdf:
+                    locked = temp / "locked.pdf"
+                    subprocess.run(
+                        [qpdf, "--encrypt", "user-pw", "owner-pw", "256", "--", str(pdf3), str(locked)],
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    cases.append((("--pdf", str(locked), "--group", "01_G1"), "encrypted"))
+                for args, expected in cases:
+                    code, output, machine = deck_cli(pkg, *args)
+                    assert code == 1 and machine.get("code") == expected, (args, code, output)
+                assert deck_tree_bytes(pkg) == snapshot, "오류인데 파일이 바뀌었다"
+                assert not list((pkg / "01_원본사진").rglob(".render-*"))
+                assert not (pkg / "01_원본사진" / "발표자료").exists() or not any(
+                    (pkg / "01_원본사진" / "발표자료").rglob("*")
+                )
+                # 계획 없음
+                empty = make_pkg(temp / "noplan")
+                code, output, machine = deck_cli(empty, "--pdf", str(pdf3), "--group", "01_G1")
+                assert code == 1 and machine.get("code") == "no_plan", output
+
+            results.append(report("DK4 손상·없음·경로 탈출·`_`·없는 발표·암호·계획 없음 거부·무변경", k4))
+
+            def k5() -> None:
+                # pypdfium2 없음(모듈 가림): CLI 는 종료 코드 2 와 설치 안내.
+                block = temp / "block_cli"
+                (block / "pypdfium2").mkdir(parents=True, exist_ok=True)
+                (block / "pypdfium2" / "__init__.py").write_text(
+                    'raise ImportError("blocked for test")\n', encoding="utf-8"
+                )
+                pkg = setup("nopdfium_cli")
+                snapshot = deck_tree_bytes(pkg)
+                code, output, machine = deck_cli(
+                    pkg, "--pdf", str(pdf3), "--group", "01_G1", env={"PYTHONPATH": str(block)}
+                )
+                assert code == 2 and machine.get("code") == "pdfium_missing", (code, output)
+                assert "pip install pypdfium2" in output, output
+                assert deck_tree_bytes(pkg) == snapshot
+
+            results.append(report("DK5 pypdfium2 없음(모듈 가림) → 종료 코드 2·설치 안내·무변경", k5))
+
+            def k6() -> None:
+                # 준비(그대로 준비·--force)와 다시 나누기가 발표자료 쪽을 해치지 않는다.
+                pkg = setup("coexist")
+                code, output, _ = deck_cli(pkg, "--pdf", str(pdf3), "--group", "01_G1")
+                assert code == 0, output
+                names = deck_names(1, 3)
+                img_dir = pkg / "02_작업장" / "01_G1" / "img"
+                before = {n: (img_dir / n).read_bytes() for n in names}
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT_DIR / "prepare_photos.py"),
+                        "--plan",
+                        str(pkg / "02_작업장" / "worktree.json"),
+                        "--force",
+                        "--workers",
+                        "1",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert "못 찾은" not in result.stderr, result.stderr
+                for name in names:
+                    assert (img_dir / name).read_bytes() == before[name], f"{name}: 준비가 줄였다"
+                # 다시 나누기(하위 폴더 기준): 발표자료 폴더는 발표가 아니고, 같은 이름의 발표에 다시 이어진다.
+                src3 = temp / "regroup_src"
+                (src3 / "01_G1").mkdir(parents=True)
+                Image.new("RGB", (100, 80), (1, 2, 3)).save(src3 / "01_G1" / "X_1.jpg")
+                (src3 / "발표자료" / "01_G1").mkdir(parents=True)
+                for name in names:
+                    shutil.copyfile(img_dir / name, src3 / "발표자료" / "01_G1" / name)
+                (src3 / "발표자료" / "01_G1" / "DECK01_원본.pdf").write_bytes(pdf3.read_bytes())
+                (src3 / "발표자료" / "옛발표").mkdir(parents=True)
+                shutil.copyfile(img_dir / names[0], src3 / "발표자료" / "옛발표" / "DECK09_p001.jpg")
+                out3 = temp / "regroup_out"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT_DIR / "init_worktree.py"),
+                        "--src",
+                        str(src3),
+                        "--out",
+                        str(out3),
+                        "--by-subfolder",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                groups = json.loads((out3 / "worktree.json").read_text(encoding="utf-8"))["groups"]
+                assert groups == {"01_G1": names + ["X_1.jpg"]}, groups
+                assert "옛발표" in result.stderr, result.stderr      # 이을 발표가 없는 자료는 알려 준다
+
+            results.append(report("DK6 그대로 준비(--force)가 자료 쪽을 안 줄임·다시 나누기가 자료를 안 나누고 다시 이음", k6))
+
+            def a1() -> None:
+                # 서버 API: 확인(inspect) → 넣기(job) → 목록·계획·불일치 → 중복 거부 → 교체.
+                pkg = setup("api")
+                src = pkg / "01_원본사진"
+                _, base, token = start_server(pkg, processes)
+                status, _, raw = http_request(
+                    "GET", base + "/api/status", headers={"X-Workflow-Token": token}
+                )
+                assert decode_json(raw)["env"]["pdfium"] is True
+
+                snapshot = deck_tree_bytes(pkg)
+                status, payload = deck_request(
+                    base, token, pdf3.read_bytes(), "01_G1", mode="inspect"
+                )
+                assert status == 200, payload
+                assert payload["pages"] == 3 and payload["existing"] == 0 and payload["deckNo"] == 1, payload
+                assert deck_tree_bytes(pkg) == snapshot, "inspect 가 파일을 바꿨다"
+                assert not list(src.glob(".발표자료-업로드중-*")), "업로드 임시 파일이 남았다"
+
+                status, payload = deck_request(base, token, pdf3.read_bytes(), "01_G1")
+                assert status == 202 and payload["job"]["kind"] == "deck-import", payload
+                assert payload["pages"] == 3, payload
+                job = wait_job(base, token)
+                assert job["state"] == "done", job_log(job)
+                assert job["result"]["ok"] is True and job["result"]["pages"] == 3, job["result"]
+                assert "@@DECK_RESULT@@" not in job_log(job), "기계용 줄이 화면 기록에 실렸다"
+                assert any("쪽 3/3" in line for line in job_log(job).splitlines()), job_log(job)
+                names = deck_names(1, 3)
+                assert manifest_names(pkg, "01_G1") == names + ["P_1.jpg"]        # 목록 단계까지 끝났다
+                assert plan_groups(pkg)["01_G1"] == names + ["P_1.jpg"]
+                assert not list(src.glob(".발표자료-업로드중-*")), "잡이 끝났는데 임시 PDF 가 남았다"
+                status, _, raw = http_request(
+                    "GET", base + "/api/status", headers={"X-Workflow-Token": token}
+                )
+                assert decode_json(raw)["planMismatch"] == {"missing": 0, "added": 0}
+                counts = {g["name"]: g["count"] for g in decode_json(raw)["groups"]}
+                assert counts["01_G1"] == 4, counts
+
+                # 같은 번호가 이미 있으면 기본 거부(무변경), replace 면 교체.
+                snapshot = deck_tree_bytes(pkg)
+                status, payload = deck_request(base, token, pdf2.read_bytes(), "01_G1")
+                assert status == 409 and payload["error"] == "deck_exists", payload
+                assert deck_tree_bytes(pkg) == snapshot
+                status, payload = deck_request(base, token, pdf2.read_bytes(), "01_G1", mode="inspect")
+                assert status == 200 and payload["existing"] == 3 and payload["pages"] == 2, payload
+                status, payload = deck_request(
+                    base, token, pdf2.read_bytes(), "01_G1", replace=True
+                )
+                assert status == 202, payload
+                job = wait_job(base, token)
+                assert job["state"] == "done", job_log(job)
+                assert job["result"]["replaced"] == 3 and job["result"]["pages"] == 2, job["result"]
+                assert manifest_names(pkg, "01_G1") == deck_names(1, 2) + ["P_1.jpg"]
+                archives = list((pkg / "02_작업장" / "01_G1").glob("_이전발표자료_*"))
+                assert len(archives) == 1, archives
+                status, _, raw = http_request(
+                    "GET", base + "/api/status", headers={"X-Workflow-Token": token}
+                )
+                assert decode_json(raw)["planMismatch"] == {"missing": 0, "added": 0}
+                assert [g["name"] for g in decode_json(raw)["groups"]] == ["01_G1", "02_G2", "기타발표"]
+
+            results.append(report("DP1 API 확인→넣기 job→목록·계획·불일치 0→중복 409→교체", a1))
+
+            def a2() -> None:
+                # 서버 API 거부: 토큰·Origin·경로 탈출·`_` 발표·없는 발표·확장자·PDF 아님·크기·잘못된 머리글.
+                pkg = setup("api_reject")
+                src = pkg / "01_원본사진"
+                _, base, token = start_server(pkg, processes)
+                data = pdf3.read_bytes()
+                snapshot = deck_tree_bytes(pkg)
+
+                status, payload = deck_request(base, token, data, "01_G1", with_token=False)
+                assert status == 401 and payload["error"] == "token_missing", payload
+                status, payload = deck_request(base, "wrong-token", data, "01_G1")
+                assert status == 403 and payload["error"] == "token_invalid", payload
+                status, payload = deck_request(
+                    base, token, data, "01_G1", origin="http://evil.example"
+                )
+                assert status == 403 and payload["error"] == "bad_origin", payload
+                for raw_group in ("../evil", "..%2Fevil", "a%2Fb", "%2e%2e", "C%3A%5Cx", "%E0%A4%A"):
+                    status, payload = deck_request(base, token, data, "", raw_group=raw_group)
+                    assert status == 400 and payload["error"] == "bad_group_name", (raw_group, status, payload)
+                status, payload = deck_request(base, token, data, "_이전작업_260929_1200")
+                assert status == 400 and payload["error"] == "bad_group_name", payload
+                status, payload = deck_request(base, token, data, "없는발표")
+                assert status == 404 and payload["error"] == "group_not_found", payload
+                for name in ("deck.txt", "deck.jpg", "../deck.pdf", ".deck.pdf", "de#ck.pdf", "deck"):
+                    status, payload = deck_request(base, token, data, "01_G1", name=name)
+                    assert status == 400 and payload["error"] == "bad_filename", (name, status, payload)
+                status, payload = deck_request(base, token, b"plain text, not a pdf", "01_G1")
+                assert status == 400 and payload["error"] == "not_pdf", payload
+                status, payload = deck_request(base, token, b"%PDF-1.4 but broken", "01_G1")
+                assert status == 400 and payload["error"] == "bad_pdf", payload
+                status, payload = deck_request(base, token, b"", "01_G1")
+                assert status == 400, payload
+                status, payload = deck_request(base, token, data, "01_G1", mode="delete")
+                assert status == 400 and payload["error"] == "bad_request", payload
+                status, payload = deck_request(base, token, data, "01_G1", deck_no="12x")
+                assert status == 400 and payload["error"] == "bad_request", payload
+                headers = api_headers(base, token)
+                headers.update(
+                    {"X-Filename": "big.pdf", "X-Group": urllib.parse.quote("01_G1", safe="")}
+                )
+                status, _, raw = declared_request(
+                    "POST", base + "/api/deck-import", 200 * 1024 * 1024 + 1, headers
+                )
+                assert status == 413 and decode_json(raw)["error"] == "upload_too_large"
+                assert deck_tree_bytes(pkg) == snapshot, "거부했는데 파일이 바뀌었다"
+                assert not (src / "발표자료").exists()
+                assert not list(src.glob(".발표자료-업로드중-*")), "업로드 임시 파일이 남았다"
+
+            results.append(report("DP2 API 거부: 토큰·Origin·탈출·`_`·없는 발표·파일명·PDF 아님·크기·머리글", a2))
+
+            def a3() -> None:
+                # 다른 발표가 이미 쓰는 번호는 409, 안 쓰는 번호는 지정할 수 있다.
+                pkg = setup("api_number")
+                _, base, token = start_server(pkg, processes)
+                data = pdf3.read_bytes()
+                status, payload = deck_request(base, token, data, "02_G2")
+                assert status == 202, payload
+                assert wait_job(base, token)["state"] == "done"
+                status, payload = deck_request(base, token, data, "01_G1", deck_no="2")
+                assert status == 409 and payload["error"] == "deck_number_in_use", payload
+                status, payload = deck_request(base, token, data, "01_G1", deck_no="5")
+                assert status == 202, payload
+                assert wait_job(base, token)["state"] == "done"
+                assert manifest_names(pkg, "01_G1") == deck_names(5, 3) + ["P_1.jpg"]
+
+            results.append(report("DP3 API DECK 번호: 다른 발표가 쓰는 번호 409·지정 번호 허용", a3))
+
+            def a4() -> None:
+                # 실행 중인 작업이 있으면 409(자료 넣기는 준비·PDF 와 같은 잡 하나를 쓴다).
+                # 목록 만들기를 4초 늦춰 "잡이 도는 중"을 결정적으로 만든다.
+                pkg = setup("api_busy")
+                tool = pkg / "02_작업장" / "slide_tool"
+                shutil.copy2(tool / "gen_manifest.py", tool / "gen_manifest_real.py")
+                (tool / "gen_manifest.py").write_text(
+                    "import runpy, time\n"
+                    "from pathlib import Path\n"
+                    "time.sleep(4)\n"
+                    "runpy.run_path(str(Path(__file__).with_name('gen_manifest_real.py')), run_name='__main__')\n",
+                    encoding="utf-8",
+                )
+                _, base, token = start_server(pkg, processes)
+                data = pdf3.read_bytes()
+                status, payload = deck_request(base, token, data, "01_G1")
+                assert status == 202, payload
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    _, _, raw = http_request(
+                        "GET", base + "/api/job?after=0", headers={"X-Workflow-Token": token}
+                    )
+                    job = decode_json(raw)["job"]
+                    if job["phase"] >= 2:
+                        break
+                    time.sleep(0.05)
+                assert job["state"] == "running" and job["phase"] == 2, job
+                status, payload = deck_request(base, token, data, "02_G2")
+                assert status == 409 and payload["error"] == "busy", payload
+                status, payload = deck_request(base, token, data, "02_G2", mode="inspect")
+                assert status == 200, payload          # 확인만 하는 요청은 잡과 겹쳐도 된다
+                status, _, payload = json_post(
+                    base, "/api/prepare", token, {"regroup": False, "gapMinutes": 20}
+                )
+                assert status == 409 and payload["error"] == "busy", payload
+                job = wait_job(base, token)
+                assert job["state"] == "done", job_log(job)
+                assert not list((pkg / "01_원본사진").glob(".발표자료-업로드중-*"))
+                assert not (pkg / "01_원본사진" / "발표자료" / "02_G2").exists()
+
+            results.append(report("DP4 진행 중 작업과 겹치면 409(확인만은 허용)·임시 PDF 정리", a4))
+
+            def e1() -> None:
+                # 이후 내보내기: 방식 A·B·C 모두 자료 쪽이 원본 그대로·순서대로 들어간다.
+                pkg = setup("export")
+                _, base, token = start_server(pkg, processes)
+                status, payload = deck_request(base, token, pdf3.read_bytes(), "01_G1")
+                assert status == 202, payload
+                assert wait_job(base, token)["state"] == "done"
+                out = pkg / "03_결과물"
+                backup = make_backup(["../01_G1/img/P_1.jpg", "../02_G2/img/Q_1.jpg"])
+                groups = ["01_G1", "02_G2", "기타발표"]
+
+                export_mode_job(base, token, backup, "per-folder")
+                assert deck_pdf_pages(out / "01_G1.pdf") == ["d1", "d2", "d3", "P"]
+                assert deck_pdf_pages(out / "02_G2.pdf") == ["Q"]
+                # 원본 그대로 = 렌더한 2400px 이 150dpi 기준 1152pt 폭으로 들어간다(보정·재표본 없음).
+                assert abs(pdf_first_page_width_pt(out / "01_G1.pdf") - 1152.0) < 2.0
+
+                export_mode_job(base, token, backup, "merged")
+                assert deck_pdf_pages(out / "전체.pdf") == ["d1", "d2", "d3", "P", "Q", "R"]
+                assert deck_pdf_pages(out / "01_G1.pdf") == ["d1", "d2", "d3", "P"]
+
+                export_mode_job(base, token, backup, "ordered", order=list(reversed(groups)))
+                assert deck_pdf_pages(out / "전체.pdf") == ["R", "Q", "d1", "d2", "d3", "P"]
+
+                # 완료본만이어도 자료 쪽은 빠지지 않는다.
+                done = make_backup(
+                    ["../01_G1/img/P_1.jpg"],
+                    statuses={"../01_G1/img/P_1.jpg": {"done": True}},
+                )
+                export_mode_job(base, token, done, "per-folder", only_done=True)
+                assert deck_pdf_pages(out / "01_G1.pdf") == ["d1", "d2", "d3", "P"]
+
+            results.append(report("DX1 넣은 뒤 내보내기 A·B·C·완료본만: 자료 쪽 원본 그대로·순서대로", e1))
+
+            def s1() -> None:
+                # pypdfium2 없음(모듈 가림): 상태는 pdfium=false, API 는 503 + 안내, 아무것도 바뀌지 않는다.
+                block = temp / "block_api"
+                (block / "pypdfium2").mkdir(parents=True, exist_ok=True)
+                (block / "pypdfium2" / "__init__.py").write_text(
+                    'raise ImportError("blocked for test")\n', encoding="utf-8"
+                )
+                pkg = setup("nopdfium_api", block)
+                _, base, token = start_server(pkg, processes)
+                status, _, raw = http_request(
+                    "GET", base + "/api/status", headers={"X-Workflow-Token": token}
+                )
+                assert decode_json(raw)["env"]["pdfium"] is False
+                snapshot = deck_tree_bytes(pkg)
+                for mode in ("inspect", "import"):
+                    status, payload = deck_request(base, token, pdf3.read_bytes(), "01_G1", mode=mode)
+                    assert status == 503 and payload["error"] == "pdfium_missing", (mode, status, payload)
+                    assert "pypdfium2" in str(payload["detail"]), payload
+                assert deck_tree_bytes(pkg) == snapshot
+                assert not list((pkg / "01_원본사진").glob(".발표자료-업로드중-*"))
+                # 다른 API 는 그대로 동작한다.
+                status, _, raw = http_request(
+                    "GET", base + "/api/backups", headers={"X-Workflow-Token": token}
+                )
+                assert status == 200, raw
+
+            if sys.platform == "win32":
+                print("[SKIP] DZ1 모듈 가림 시뮬레이션 — 셸 래퍼를 쓰지 못하는 Windows 에서는 건너뜀")
+            else:
+                results.append(report("DZ1 pypdfium2 없음(모듈 가림) → 상태 false·API 503+안내·무변경", s1))
+        finally:
+            for process in processes:
+                stop_process(process)
+    return results
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "regress", "detect", "event"))
+    parser.add_argument("--only", choices=("auth", "upload", "rename", "job", "export", "regress", "detect", "event", "deck"))
     return parser.parse_args(argv)
 
 
@@ -2414,11 +3117,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         "regress": run_export_regress,
         "detect": run_auto_detect,
         "event": run_new_event,
+        "deck": run_deck,
     }
     selected = (
         [args.only]
         if args.only
-        else ["auth", "upload", "rename", "job", "export", "regress", "detect", "event"]
+        else ["auth", "upload", "rename", "job", "export", "regress", "detect", "event", "deck"]
     )
     results: list[bool] = []
     try:

@@ -31,12 +31,13 @@ except (AttributeError, OSError):
 PORT = 8770
 MIN_PYTHON = (3, 9)
 REQUIRED_PKGS = ("cv2", "numpy", "PIL")
-OPTIONAL_PKGS = ("pillow_heif",)
+OPTIONAL_PKGS = ("pillow_heif", "pypdfium2")
 PACKAGE_LABELS = {
     "cv2": "opencv-python",
     "numpy": "numpy",
     "PIL": "Pillow",
     "pillow_heif": "pillow-heif",
+    "pypdfium2": "pypdfium2",
 }
 
 
@@ -309,6 +310,10 @@ def _snapshot(pkg_root: Path, results: list[CheckResult]) -> dict[str, object]:
         (result.ok for result in results if result.name == "패키지 pillow-heif"),
         False,
     )
+    pdfium = next(
+        (result.ok for result in results if result.name == "패키지 pypdfium2"),
+        False,
+    )
     return {
         "ok": ok,
         "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -316,6 +321,7 @@ def _snapshot(pkg_root: Path, results: list[CheckResult]) -> dict[str, object]:
         "cpu": cpu,
         "venv_py": str(py) if py else None,
         "heic": heic,
+        "pdfium": pdfium,
         "results": [result.public() for result in results],
     }
 
@@ -419,6 +425,15 @@ def interactive_setup(pkg_root: Path, assume_yes: bool = False, quiet: bool = Fa
             )
             if consent:
                 _run_install([str(py), "-m", "pip", "install", "pillow-heif"], quiet)
+
+        pdfium_ok = next((r.ok for r in check_packages(py) if r.name == "패키지 pypdfium2"), False)
+        if not pdfium_ok:
+            consent = assume_yes or _ask(
+                "발표자료 PDF 를 쪽 그림으로 바꿔 넣으시나요? pypdfium2 설치 [y/N] ",
+                False,
+            )
+            if consent:
+                _run_install([str(py), "-m", "pip", "install", "pypdfium2"], quiet)
 
     snapshot = inspect_environment(pkg_root)
     if not quiet:

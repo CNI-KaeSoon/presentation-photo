@@ -1555,9 +1555,11 @@ function openFolderMenu(folder,anchor,x,y){
   const wf=window.__slideWorkflow;
   const rn=wf&&typeof wf.renameAvailability==='function'?wf.renameAvailability():{enabled:false,reason:'도구 서버 연결을 확인하는 중입니다.'};
   const det=autoDetectAvailability();
+  const dk=wf&&typeof wf.deckAvailability==='function'?wf.deckAvailability():{enabled:false,reason:'도구 서버 연결을 확인하는 중입니다.'};
   openMenu({anchor,x,y,label:`발표 메뉴: ${folder}`,focusFirst:true,items:[
     {label:'이름 바꾸기',disabled:!rn.enabled,title:rn.enabled?'':rn.reason,onClick:()=>startGroupRename(folder)},
     {label:'경계 자동 찾기',disabled:!det.enabled,title:det.enabled?'이 발표 사진의 슬라이드 경계를 한꺼번에 찾습니다. 이미 손댄 사진은 건너뜁니다 (Alt+클릭: 덮어쓰기)':det.reason,onClick:ev=>autoDetectGroup(folder,!!(ev&&ev.altKey))},
+    {label:'발표자료 PDF 넣기…',disabled:!dk.enabled,title:dk.enabled?'발표자료 PDF를 쪽마다 그림으로 바꿔 이 발표에 자료로 넣습니다. 자료 쪽은 경계·색보정 없이 원본 그대로 PDF에 들어갑니다':dk.reason,onClick:()=>wf.pickDeckPdf(folder)},
     {sep:true},
     {label:'전체 시계 90° 돌리기',onClick:()=>rotateFolderAll(folder,1)},
     {label:'전체 반시계 90° 돌리기',onClick:()=>rotateFolderAll(folder,-1)}
@@ -1612,7 +1614,7 @@ function folderHtml(folder){
       <button type="button" class="btn ghost sm icon tw" data-act="toggle" aria-expanded="${open?'true':'false'}" aria-label="${esc(folder)} ${open?'접기':'펼치기'}">${ic('right')}</button>
       <span class="nm" title="${esc(folder)}">${esc(folder)}</span>
       <span class="folderMeta">${navFilter==='all'?c.total:idx.length}장</span>
-      <button type="button" class="btn ghost sm icon" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(folder)} 발표 메뉴" title="발표 메뉴 — 이름 바꾸기 · 경계 자동 찾기 · 전체 회전">${ic('more')}</button>
+      <button type="button" class="btn ghost sm icon" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(folder)} 발표 메뉴" title="발표 메뉴 — 이름 바꾸기 · 경계 자동 찾기 · 발표자료 PDF 넣기 · 전체 회전">${ic('more')}</button>
     </div>
     <div class="prog"><div class="row"><span>진행</span><span><b>${c.done}</b> / ${c.target} 완료${c.excluded?` · 제외 ${c.excluded}`:''}</span></div><div class="bar" role="progressbar" aria-label="${esc(folder)} 진행" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div></div>
     <div class="folderBody">${items}</div>

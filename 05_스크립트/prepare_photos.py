@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -54,6 +55,11 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 BAD_CHARS = ("#", "?", "%")
+
+# 발표자료 쪽(DECK<번호>_p<쪽>)은 화면 캡처가 아니라 PDF 를 그림으로 바꾼 것이다. 작업용 그림도
+# 1920px 로 줄이지 않는다 — PDF 만들 때 DECK 쪽은 작업 img 를 그대로 쓰기 때문이다.
+DECK_STEM_RE = re.compile(r"^DECK\d*_p\d+$", re.IGNORECASE)
+DECK_MAX_PX = 4000
 
 
 def is_single_basename(value) -> bool:
@@ -201,6 +207,15 @@ def convert(src, dst, max_px, quality):
     im = open_pil(src)
     if im is None:
         return False
+    if DECK_STEM_RE.match(nfc(os.path.splitext(os.path.basename(src))[0])):
+        # 발표자료 쪽: 충분히 작은 JPEG 는 바이트 그대로 복사하고, 아니면 DECK_MAX_PX 까지만 줄인다.
+        if os.path.splitext(src)[1].lower() in (".jpg", ".jpeg") and max(im.size) <= DECK_MAX_PX:
+            try:
+                shutil.copyfile(src, dst)
+            except OSError:
+                return False
+            return True
+        max_px = max(max_px, DECK_MAX_PX)
     im.thumbnail((max_px, max_px), Image.LANCZOS)     # 종횡비 유지, 확대는 안 함
     try:
         im.save(dst, "JPEG", quality=quality, optimize=True)

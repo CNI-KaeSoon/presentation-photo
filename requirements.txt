@@ -13,6 +13,10 @@ Pillow>=10.0              # 사진 읽기·축소 · PDF 조립
 # macOS 는 내장 sips 로도 동작하지만 pillow-heif 쪽이 훨씬 빠릅니다.
 # pillow-heif>=0.16
 
+# 발표자료 PDF 를 쪽 그림으로 넣을 때(발표 ⋯ 메뉴 · 05_스크립트/deck_to_pages.py) — 선택
+#   pip install pypdfium2      (Apache-2.0/BSD-3, 순수 휠 — 시스템 설치 불필요)
+# pypdfium2>=4.30
+
 # 선택 — 없어도 핵심 기능은 동작합니다
 #   poppler (pdfunite) : 통합 PDF 병합 --merge   → brew install poppler
 #   Node.js            : 색연산 일치 검증        → test_color_parity.py

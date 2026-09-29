@@ -51,6 +51,25 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 BAD_CHARS = ("#", "?", "%", "/", "\\", ":")
+DECK_DIR = "발표자료"     # 01_원본사진/발표자료/<발표>/DECK…_p….jpg — deck_to_pages.py 가 만든 발표자료 쪽
+DECK_NAME_RE = re.compile(r"^DECK\d*_p\d+\.[a-z]+$", re.IGNORECASE)
+
+
+def split_deck_pages(src, photos):
+    """발표자료 전용 폴더의 쪽은 촬영 사진이 아니므로 나누기에서 빼고, {발표 폴더: [쪽 이름…]} 로 돌려준다."""
+    deck_root = os.path.abspath(os.path.join(src, DECK_DIR))
+    rest, decks = [], {}
+    for p in photos:
+        parent = os.path.dirname(os.path.abspath(p["path"]))
+        rel = os.path.relpath(parent, deck_root)
+        if rel.startswith("..") or os.path.isabs(rel):
+            rest.append(p)
+        elif rel != "." and DECK_NAME_RE.match(p["name"]):
+            decks.setdefault(nfc(rel.split(os.sep)[0]), []).append(p["name"])
+        # 발표자료 폴더 안의 그 밖의 파일(PDF 사본 등)은 사진이 아니라 조용히 뺀다
+    for names in decks.values():
+        names.sort(key=lambda n: [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", n)])
+    return rest, decks
 
 
 def portable_path(path, plan_dir):
@@ -208,7 +227,7 @@ def main():
             return 1
 
         print(backend_report())
-        photos = scan_photos(a.src)
+        photos, deck_pages = split_deck_pages(a.src, scan_photos(a.src))
         if not photos:
             print(f"‼️ 이미지가 없다: {a.src}", file=sys.stderr)
             return 1
@@ -238,6 +257,17 @@ def main():
             return 1
         plan_out = assigned
 
+    # ---- 발표자료 쪽: 같은 이름의 발표가 새 계획에 있으면 그 발표 맨 앞에 다시 잇는다 ----
+    deck_of = {}
+    if not a.groups:
+        for label in plan_out:
+            if deck_pages.get(nfc(label)):
+                deck_of[label] = deck_pages[nfc(label)]
+        orphan = [k for k in deck_pages if k not in {nfc(l) for l in plan_out}]
+        for k in orphan:
+            print(f"⚠️ 발표자료 {len(deck_pages[k])}쪽(01_원본사진/{DECK_DIR}/{k})은 이 이름의 발표가 없어 "
+                  f"계획에 넣지 않았다 — 발표 ⋯ 메뉴의 [발표자료 PDF 넣기]로 다시 넣어라.", file=sys.stderr)
+
     # ---- 미리보기 ----
     print("\n=== 워크트리 계획 ===")
     total = 0
@@ -249,7 +279,8 @@ def main():
             span = f"  {t0} ~ {t1}"
         else:
             span = ""
-        print(f"  {label:34s} {len(items):4d}장{span}")
+        deck_note = f"  (+ 발표자료 {len(deck_of[label])}쪽)" if label in deck_of else ""
+        print(f"  {label:34s} {len(items):4d}장{span}{deck_note}")
     print(f"  {'합계':34s} {total:4d}장")
 
     # ---- 폴더 + 계획 파일 ----
@@ -265,7 +296,7 @@ def main():
         "_path_mode": {"root": root_mode, "source": source_mode},
         "root": stored_root,
         "source": stored_source,
-        "groups": {label: [p["name"] for p in items]
+        "groups": {label: deck_of.get(label, []) + [p["name"] for p in items]
                    for label, items in plan_out.items()},
     }
     if "absolute" in (root_mode, source_mode):
