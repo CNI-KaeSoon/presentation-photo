@@ -74,6 +74,29 @@ def resolve(key, ws, idx):
     return None, None
 
 
+def match_truth(backup, workspace):
+    """백업의 정답을 작업장 사진과 짝짓는다(평가·학습이 같은 규칙을 쓴다).
+
+    반환: ([(key, 사진 경로, 정답 4점)...], 정답 전체 수, 기본값이라 뺀 수, 파일 없음 수, 파일명 대체 매칭 수).
+    """
+    truth = load_truth(backup)
+    idx = index_workspace(workspace)
+    matched, skipped_default, missing, by_base = [], 0, 0, 0
+    for key, q in truth.items():
+        if not (isinstance(q, list) and len(q) == 4):
+            continue
+        if is_default(q):
+            skipped_default += 1
+            continue
+        how, path = resolve(key, workspace, idx)
+        if not path:
+            missing += 1
+            continue
+        by_base += how == "basename"
+        matched.append((key, path, q))
+    return matched, len(truth), skipped_default, missing, by_base
+
+
 def corner_errors(pred, truth, w, h):
     diag = math.hypot(w, h)
     return [math.hypot((p[0] - t[0]) * w, (p[1] - t[1]) * h) / diag
@@ -144,23 +167,10 @@ def main():
     ap.add_argument("--csv")
     args = ap.parse_args()
 
-    truth = load_truth(args.backup)
-    idx = index_workspace(args.workspace)
-    jobs, skipped_default, missing, by_base = [], 0, 0, 0
-    for key, q in truth.items():
-        if not (isinstance(q, list) and len(q) == 4):
-            continue
-        if is_default(q):
-            skipped_default += 1
-            continue
-        how, path = resolve(key, args.workspace, idx)
-        if not path:
-            missing += 1
-            continue
-        by_base += how == "basename"
-        jobs.append((key, path, q, args.detector))
+    matched, n_truth, skipped_default, missing, by_base = match_truth(args.backup, args.workspace)
+    jobs = [(key, path, q, args.detector) for key, path, q in matched]
 
-    print(f"정답 {len(truth)}건 | 기본값(손대지 않음) 제외 {skipped_default} | "
+    print(f"정답 {n_truth}건 | 기본값(손대지 않음) 제외 {skipped_default} | "
           f"파일 없음 {missing} | 파일명 대체 매칭 {by_base} | 평가 {len(jobs)}")
     if not jobs:
         print("EVAL: n=0 hit@2%=n/a hit@5%=n/a fail=n/a median_max_err=n/a")
